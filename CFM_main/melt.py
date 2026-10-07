@@ -890,8 +890,9 @@ def darcyscheme(self,iii):
 
         
     ## Sanity checks
-    if abs(sum(self.LWC)+refr_tot+runofftot-(melt_mass_tot/1000+sum(initial_lwc)+rain_vol_tot)) > 1e-12: #check for water balance
-        print('Liquid water loss/gain, amount:',sum(self.LWC)+sum(self.refrozen)+self.runoff-(melt_mass_tot/1000+sum(initial_lwc)+rain_vol_tot))
+    water_residual = sum(self.LWC)+refr_tot+runofftot-(melt_mass_tot/1000+sum(initial_lwc)+rain_vol_tot) #water balance residual [m we]
+    if abs(water_residual) > 1e-12: #check for water balance
+        print('Liquid water loss/gain, amount:',water_residual)
     
     if max(self.Tz>273.15):
         print('Max Tz:',max(self.Tz))
