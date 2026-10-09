@@ -670,6 +670,7 @@ def darcyscheme(self,iii):
     dltz           = np.append(self.dz[0:-1]/2+self.dz[1:]/2,self.dz[-1]/2) #distance between centres of nodes
     runofftot      = 0. #total runoff over the entire Darcy routine
     refr_tot        = 0. #total refreezing over the entire Darcy routine
+    dh_melt        = 0. #thickness of melted nodes over the entire Darcy routine [m], negative
     if self.doublegrid: #if we have doublegrid: need to adjust gridtrack
         meltgridtrack  = np.copy(self.gridtrack) #prepare gridtrack adjusted for melting
     elif self.doublegrid==False:
@@ -696,6 +697,7 @@ def darcyscheme(self,iii):
             pm_lwc         = self.LWC[ind1]/self.dz[ind1] * pm_dz #lwc of partially melted node
             lwc_p          = sum(self.LWC[0:ind1+1])-pm_lwc #lwc of the melted part of the firn contributing to percolation
             n_mlt          = ind1+1 #number of nodes melted, including the partially melted node
+            dh_melt        = dh_melt - (np.sum(self.dz[0:ind1]) + (self.dz[ind1]-pm_dz)) #add thickness of nodes melted in this sub-step
             self.dz        = np.concatenate(([pm_dz],self.dz[ind1+1:-1],self.dz[-1]*np.ones(n_mlt))) #update dz
             self.dzn       = np.concatenate((np.zeros(n_mlt),self.dz[1:])) #taken from the code of Max
             self.dzn       = self.dzn[0:self.compboxes] #taken from the code of Max
@@ -960,7 +962,7 @@ def darcyscheme(self,iii):
         print(f'{iii} CFM time: {self.modeltime[iii]}')
         print(f'Darcy scheme run time: {np.around(time.time()-ticdarcy,2)}')    
 
-    return self.rho,self.age,self.dz,self.Tz,self.r2,self.z,self.mass,self.dzn,self.LWC,meltgridtrack,refr_tot,runofftot
+    return self.rho,self.age,self.dz,self.Tz,self.r2,self.z,self.mass,self.dzn,self.LWC,meltgridtrack,refr_tot,runofftot,dh_melt
 
 
 # def LWC_correct(self):
