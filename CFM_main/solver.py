@@ -697,9 +697,9 @@ def transient_solve_enthalpy(z_edges, Z_P, dt, Gamma_P, T_old_C, th_liquid_old, 
             th_liquid: updated liquid mass per total volume [kg/m3]
             count: number of Picard iterations used
             claw_mushy: liquid mass clamped back (spurious growth in already-mushy
-                layers) this step [kg/m2]
+                layers) on the last Picard iterate [kg/m2]
             claw_dry: liquid mass clamped back (spurious creation in previously-dry
-                layers) this step [kg/m2]
+                layers) on the last Picard iterate [kg/m2]
             energy_resid: interior-cell energy conservation residual [J/m2]
 
     Reference(s): Voller and Swaminathan (1991), eqs. 31-32;
@@ -736,6 +736,10 @@ def transient_solve_enthalpy(z_edges, Z_P, dt, Gamma_P, T_old_C, th_liquid_old, 
 
     count = 0
     # --- clamp backstops with tally ---
+    # Only the clamp on the last iterate stays in the returned state. A clamp
+    # on an earlier iterate is undone by the next one, because b uses
+    # Hhat_old. For example, a layer with liquid below 0 C is 'mushy', so the
+    # first iterate melts it; it then refreezes with its latent heat.
     claw_mushy = 0.0
     claw_dry   = 0.0
     
@@ -795,14 +799,14 @@ def transient_solve_enthalpy(z_edges, Z_P, dt, Gamma_P, T_old_C, th_liquid_old, 
         ### diffusion cannot ADD liquid to a 0C layer; cap at the pre-iteration value
         grew = (th_liquid_new > th_liquid_old) & (th_liquid_old > 0.0)
         excess = np.where(grew, th_liquid_new - th_liquid_old, 0.0)
-        claw_mushy += np.sum(excess * dZ)          # kg/m2 removed this step
+        claw_mushy = np.sum(excess * dZ)           # kg/m2 removed by the last iterate
         th_liquid_new -= excess
         th_solid_new  += excess
         T_cons[grew]   = 0.0
 
         dry_grew = (th_liquid_new > 0.0) & (th_liquid_old == 0.0)
         excess_d = np.where(dry_grew, th_liquid_new, 0.0)   # all of it is spurious
-        claw_dry += np.sum(excess_d * dZ)          # kg/m2 removed this step
+        claw_dry = np.sum(excess_d * dZ)           # kg/m2 removed by the last iterate
         th_liquid_new -= excess_d
         th_solid_new  += excess_d
         T_cons[dry_grew] = 0.0
