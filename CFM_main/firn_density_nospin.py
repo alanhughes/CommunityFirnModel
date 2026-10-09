@@ -1246,13 +1246,13 @@ class FirnDensityNoSpin:
                         if self.modeltime[iii]<1980:
                             self.rho, self.age, self.dz, self.Tz, self.r2, self.z, self.mass, self.dzn, self.LWC, meltgridtrack, self.refreeze, self.runoff, self.dh_melt = bucket(self,iii)
                         elif self.modeltime[iii]>=1980:
-                            self.rho, self.age, self.dz, self.Tz, self.r2, self.z, self.mass, self.dzn, self.LWC, meltgridtrack, self.refreeze, self.runoff = darcyscheme(self,iii)
+                            self.rho, self.age, self.dz, self.Tz, self.r2, self.z, self.mass, self.dzn, self.LWC, meltgridtrack, self.refreeze, self.runoff, self.dh_melt = darcyscheme(self,iii)
                         if self.doublegrid==True: # if we use doublegrid -> use the gridtrack corrected for melting
                             self.gridtrack = np.copy(meltgridtrack)
                         self.meltvol = self.snowmeltSec[iii]*S_PER_YEAR*0.917 #[m w.e.]
                         self.rainvol = self.rainSec[iii]*S_PER_YEAR*0.917 #[m w.e.]
                     else: # Dry firn column and no input of meltwater                       
-                        self.refreeze, self.runoff,self.meltvol,self.rainvol = 0.,0.,0.,0.
+                        self.refreeze, self.runoff,self.meltvol,self.rainvol,self.dh_melt = 0.,0.,0.,0.,0.
                         self.dzn     = self.dz[0:self.compboxes] # Not sure this is necessary
                 ### end darcy ##################               
 
@@ -1260,10 +1260,11 @@ class FirnDensityNoSpin:
                     #VV You can choose a date to switch from bucket to prefflow, this should be easy to use from the json file
                     if self.modeltime[iii] >= 1980: # Apply dualperm from a certain date
                         if ((self.snowmeltSec[iii]>0.) or (np.any(self.LWC > 0.)) or (self.rainSec[iii] > 0.)): #i.e. there is water
-                            self.rho, self.age, self.dz, self.Tz, self.z, self.mass, self.dzn, self.LWC, self.PLWC_mem, self.r2, self.refrozen, self.Trunoff = prefflow(self,iii)
+                            self.rho, self.age, self.dz, self.Tz, self.z, self.mass, self.dzn, self.LWC, self.PLWC_mem, self.r2, self.refrozen, self.Trunoff, self.dh_melt = prefflow(self,iii)
                         else: #Dry firn column and no input of meltwater                            
                             self.Trunoff     = np.array([0.]) #VV no runoff
                             self.refrozen   = np.zeros_like(self.dz) #VV no refreezing
+                            self.dh_melt    = 0. # no melt
                             self.dzn        = self.dz[0:self.compboxes] # Not sure this is necessary
                     elif self.modeltime[iii] < 1980: # Apply bVV until a certain date
                         if (self.snowmeltSec[iii]>0) or (np.any(self.LWC > 0.) or (self.rainSec[iii] > 0.)): #i.e. there is water
@@ -1272,6 +1273,7 @@ class FirnDensityNoSpin:
                             #Dry firn column and no input of meltwater
                             self.Trunoff     = np.array([0.]) #VV no runoff
                             self.refrozen   = np.zeros_like(self.dz) #VV no refreezing
+                            self.dh_melt    = 0. # no melt
                             self.dzn        = self.dz[0:self.compboxes] # Not sure this is necessary
                 ### end prefsnowpack ##################
 
@@ -1279,11 +1281,12 @@ class FirnDensityNoSpin:
                     #VV You can choose a date to switch from bucket to prefflow, this should be easy to use from the json file
                     if self.modeltime[iii] >= 1980: # Apply dualperm from a certain date
                         if ((self.snowmeltSec[iii]>0.) or (np.any(self.LWC > 0.)) or (self.rainSec[iii] > 0.)): #i.e. there is water
-                            self.rho, self.age, self.dz, self.Tz, self.z, self.mass, self.dzn, self.LWC, self.PLWC_mem, self.r2, self.refrozen, self.Trunoff = resingledomain(self,iii)
+                            self.rho, self.age, self.dz, self.Tz, self.z, self.mass, self.dzn, self.LWC, self.PLWC_mem, self.r2, self.refrozen, self.Trunoff, self.dh_melt = resingledomain(self,iii)
                         else:
                             #Dry firn column and no input of meltwater
                             self.Trunoff    = np.array([0.]) #VV no runoff
                             self.refrozen   = np.zeros_like(self.dz) #VV no refreezing
+                            self.dh_melt    = 0. # no melt
                             self.dzn        = self.dz[0:self.compboxes] # Not sure this is necessary
                     elif self.modeltime[iii] < 1980: # Apply bVV until a certain date
                         if (self.snowmeltSec[iii]>0) or (np.any(self.LWC > 0.) or (self.rainSec[iii] > 0.)): #i.e. there is water
@@ -1292,6 +1295,7 @@ class FirnDensityNoSpin:
                             #Dry firn column and no input of meltwater
                             self.Trunoff    = np.array([0.]) #VV no runoff
                             self.refrozen   = np.zeros_like(self.dz) #VV no refreezing
+                            self.dh_melt    = 0. # no melt
                             self.dzn        = self.dz[0:self.compboxes] # Not sure this is necessary
                 ### end prefsnowpack ##################
 
