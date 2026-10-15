@@ -419,6 +419,8 @@ def transient_solve_TR(z_edges, Z_P, dt, Gamma_P, phi_0, nz_P, phi_s, c_vol, air
     #######################################
     # this part is for gas diffusion, which takes a bit more physics
     if airdict!=None:
+        f_u = 1 - (Z_P - z_edges[:-1]) / deltaZ_u # Patankar Eq. 4.10; _fv_geometry does not return these
+        f_d = 1 - (z_edges[1:] - Z_P) / deltaZ_d
         Gamma_Po    = Gamma_P * airdict['por_op'] #This is the diffusivity times the open porosity.
 
         Gamma_U     = np.append(Gamma_Po[0], Gamma_Po[0: -1] )
