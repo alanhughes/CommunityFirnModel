@@ -573,8 +573,9 @@ def _energy_residual(T_new, th_solid, th_liquid, T_old_C, th_solid_old,
 
     Cell 0 is excluded: it carries a Dirichlet boundary condition, which is
     an unaccounted source/sink, so surface energy is not conserved by
-    construction. Only the 0|1 face flux enters. The lower boundary is
-    assumed zero-gradient (no flux).
+    construction. Only the 0|1 face flux enters. The last cell is also
+    excluded: with the zero-gradient lower boundary, its row only copies the
+    temperature of the cell above, so it is not a control volume.
 
     :return: dH_interior - flux_in [J/m2]; zero for a perfectly
         conservative scheme, up to the backward-Euler flux approximation.
@@ -583,7 +584,7 @@ def _energy_residual(T_new, th_solid, th_liquid, T_old_C, th_solid_old,
     flux_top = aU_top * (T_new[0] - T_new[1]) * dt
     H_old = enthalpy_of(T_old_C, th_solid_old, th_liquid_old)
     H_new = enthalpy_of(T_new, th_solid, th_liquid)
-    dH_interior = np.sum((H_new[1:] - H_old[1:]) * dZ[1:])
+    dH_interior = np.sum((H_new[1:-1] - H_old[1:-1]) * dZ[1:-1])
     return dH_interior - flux_top
     ############################
     ### end _energy_residual ###
@@ -1181,11 +1182,10 @@ def transient_solve_decp(z_edges, Z_P, dt, Gamma_P, T_old_C,
     # flux_top = aU_top * (T[0] - T[1]) * dt          # J/m2 into interior (full dt)
     
     # --- interior-cell energy residual (flux accumulated over sub-steps) ---
-    energy_resid_sub = (np.sum((enthalpy_of(T, th_solid, th_liquid)[1:]
-                               - Hhat_old[1:]) * dZ[1:]) - flux_top)
-    energy_resid = _energy_residual(T, th_solid, th_liquid, T_old_C,
-                                    th_solid_old, th_liquid_old,
-                                    dZ, Gamma_u, deltaZ_u, dt)
+    energy_resid_sub = (np.sum((enthalpy_of(T, th_solid, th_liquid)[1:-1]
+                               - Hhat_old[1:-1]) * dZ[1:-1]) - flux_top)
+    # The full-step flux from the final T is not the flux the sub-steps used.
+    energy_resid = energy_resid_sub
 
     _diag_log('decp', iii, energy_resid_sub, count,
               n_warm=int(np.sum(T > 0.0)))
