@@ -857,7 +857,7 @@ def darcyscheme(self,iii):
             # Calculate equilibrium #
             f_eq = ghd[j1]-ghd[j1+1]-dltz[j1] #Hirashima 2010 Eq.(20) evaluated at interface
 
-            if abs(f_eq>1.):
+            if abs(f_eq)>1.:
                 # Initial guess gives f_eq far from 0: Bisection algorithm #
                 glw[j1] = flux_bisection(glw[j1],LWCav[inds11],glwcacm[inds11],theta_i[inds11],theta_s[inds11],glwc[inds11],self.dz[inds11],avG[inds11],nvG[inds11],mvG[inds11],eps_cvg)
             else:
