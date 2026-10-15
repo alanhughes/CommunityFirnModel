@@ -192,8 +192,6 @@ def test_TR_conserves_energy_with_zero_flux_bottom():
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(strict=True, raises=NameError,
-                   reason='The airdict branch uses f_u and f_d, which _fv_geometry does not return')
 def test_TR_gas_path_without_gravity_thermal_or_advection_is_plain_diffusion():
     # With open porosity 1, no eddy diffusion, and gravity, thermal fractionation
     # and advection off, the gas path solves the same equation as the heat path
