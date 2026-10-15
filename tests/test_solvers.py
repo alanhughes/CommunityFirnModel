@@ -297,3 +297,22 @@ def test_ahc_conserves_energy():
 def test_ahc_refreezing_front_agrees_with_enthalpy():
     np.testing.assert_allclose(_front_depths('ahc', steps=20), _front_depths('enthalpy', steps=20),
                                rtol=0, atol=0.05 + 1e-9)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('name', ['enthalpy', 'ncz', 'decp', 'ahc'])
+def test_energy_resid_excludes_the_bottom_boundary_node(name):
+    # The bottom node of _refreeze_column changes in the step. It is a boundary
+    # row, not a control volume, so energy_resid must not include it.
+    column = _refreeze_column()
+    overrides = {'iters': 1} if name == 'decp' else {}
+    T, solid, liquid, result = next(_run(name, column, steps=1, **overrides))
+    expected = _energy_imbalance(column[0], DAY, T, solid, liquid, result)
+    assert result['energy_resid'] == pytest.approx(expected, rel=1e-9, abs=1e-6)
+
+
+@pytest.mark.unit
+def test_decp_energy_resid_uses_the_sub_step_fluxes():
+    column = _refreeze_column()
+    *_, result = next(_run('decp', column, steps=1))
+    assert abs(result['energy_resid']) < 1e-10 * _latent_heat(column)
