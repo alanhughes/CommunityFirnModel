@@ -142,6 +142,7 @@ def flux_newtonraphson(gc,LWCav,glwcacm,th_i,th_s,lwc,dz,avG,nvG,mvG,eps_cvg):
     gth_e = thetae_update(gc,th_i,th_s,lwc,dz)
     ghd   = phead_vG(avG,nvG,mvG,gth_e) #pressure head [m]
     f_eq = ghd[0]-ghd[1]-dltz #Hirashima 2010 Eq.(20) evaluated at interface
+    gmax    = min(LWCav[0],glwcacm[1]) #upper bound of the flux (limited by lwc available and pore space available)
     while ((cvg_nr==False) and nrit<nritmax):
         # Values of previous iteration #
         gprev0    = np.copy(gc)
@@ -166,8 +167,8 @@ def flux_newtonraphson(gc,LWCav,glwcacm,th_i,th_s,lwc,dz,avG,nvG,mvG,eps_cvg):
             gth_e = thetae_update(gc,th_i,th_s,lwc,dz)
             ghd   = phead_vG(avG,nvG,mvG,gth_e) #pressure head [m]
             f_eq = ghd[0]-ghd[1]-dltz #Hirashima 2010 Eq.(20) evaluated at interface
-            if ((abs(f_eq)>abs(fprev0)) or (abs(dfdg)>1e6)):
-                #Newton-Raphson diverges: use bisection algorithm #
+            if ((abs(f_eq)>abs(fprev0)) or (abs(dfdg)>1e6) or gc<0 or gc>gmax):
+                #Newton-Raphson diverges or leaves the bounds of the flux: use bisection algorithm #
                 gc = flux_bisection(gprev0,LWCav,glwcacm,th_i,th_s,lwc,dz,avG,nvG,mvG,eps_cvg)
                 cvg_nr = True
         

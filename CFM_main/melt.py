@@ -545,7 +545,7 @@ def bucket(self,iii):
             c3zuo           = 140.                      # constant from Zuo and Oerlemans (1996) [/]
             tstar           = c1zuo + c2zuo * np.exp(-1 * c3zuo * Slope) # Eq.(22) Zuo and Oerlemans 1996 [s]
             rfZO            = np.zeros(nnd)             # initialise runoff Zuo and Oerlemans
-            rfZO[indsrfZO]  = self.dt[iii] * LWC_rfZO[indsrfZO] / tstar # from Eq.(21) Zuo and Oerlemans 1996 [m]
+            rfZO[indsrfZO]  = min(self.dt[iii] / tstar, 1.) * LWC_rfZO[indsrfZO] # from Eq.(21) Zuo and Oerlemans 1996 [m]; a step longer than tstar removes only the excess
             self.LWC        = self.LWC - rfZO           # decrease LWC
             runofftot       = runofftot + np.sum(rfZO)  # add the calculated runoff to the total runoff
             runofftot3 = (runofftot*RHO_W_KGM).copy()
@@ -574,7 +574,7 @@ def bucket(self,iii):
     refr_cap_new        = np.minimum(refr_cap0_new, phivol_av)            # total (existing LWC plus any more) refreezing capacity [m we]
     
     ### Refreezing ###
-    freeze      = np.minimum(self.LWC,refr_cap_new)     # refreezing in each individual node [m we] is min of cc available and liquid available
+    freeze      = np.maximum(0., np.minimum(self.LWC,refr_cap_new)) # refreezing in each individual node [m we] is min of cc available and liquid available; never negative
     self.mass   = self.mass + RHO_W_KGM*freeze  # update mass [kg]
     self.LWC    = self.LWC - freeze                 # update LWC [m3]
     self.rho    = self.mass/self.dz             # update density [kg m-3]
@@ -857,12 +857,12 @@ def darcyscheme(self,iii):
             # Calculate equilibrium #
             f_eq = ghd[j1]-ghd[j1+1]-dltz[j1] #Hirashima 2010 Eq.(20) evaluated at interface
 
-            if abs(f_eq>1.):
+            if abs(f_eq)>1.:
                 # Initial guess gives f_eq far from 0: Bisection algorithm #
-                glw[j1] = flux_bisection(glw[j1],LWCav,glwcacm,theta_i[inds11],theta_s[inds11],glwc[inds11],self.dz[inds11],avG[inds11],nvG[inds11],mvG[inds11],eps_cvg)
+                glw[j1] = flux_bisection(glw[j1],LWCav[inds11],glwcacm[inds11],theta_i[inds11],theta_s[inds11],glwc[inds11],self.dz[inds11],avG[inds11],nvG[inds11],mvG[inds11],eps_cvg)
             else:
                 # Initial guess gives f_eq close to 0: Newton-Raphson algorithm #
-                glw[j1] = flux_newtonraphson(glw[j1],LWCav,glwcacm,theta_i[inds11],theta_s[inds11],glwc[inds11],self.dz[inds11],avG[inds11],nvG[inds11],mvG[inds11],eps_cvg)
+                glw[j1] = flux_newtonraphson(glw[j1],LWCav[inds11],glwcacm[inds11],theta_i[inds11],theta_s[inds11],glwc[inds11],self.dz[inds11],avG[inds11],nvG[inds11],mvG[inds11],eps_cvg)
                              
             # Update glwc and glwcacm according to updated flow (to compute gtheta_e when dealing with upper nodes) #
             glwc         = self.LWC+np.append(0,glw)-np.append(glw,0) #update glwc 
