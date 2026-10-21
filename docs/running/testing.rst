@@ -95,7 +95,7 @@ A conservation test runs the model (spin-up and ``time_evolve()``) for two years
    * - File
      - Contents
    * - ``test_short_runs.py``
-     - Runs with configurations that crashed before: **MELT** true with **SUBLIM** false; **darcy** with output from 1980 and from the first step.
+     - Runs with configurations that crashed before: **MELT** true with **SUBLIM** false; **darcy**, **prefsnowpack** and **resingledomain**, each with output from 1980 and from the first step.
    * - ``test_fixtures.py``
      - A short run with **melt_strict** true completes.
 
