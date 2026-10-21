@@ -1,6 +1,7 @@
 '''
-Tests for the densification law HLdynamic in physics.py against the
-equations of Stevens et al. (2020, Geosci. Model Dev. 13, 4355-4377).
+Tests for the densification laws HLdynamic and KuipersMunneke2015 in
+physics.py against the equations of Stevens et al. (2020, Geosci. Model Dev.
+13, 4355-4377).
 
 The reference values are calculated in this file from the published equations,
 with literal constants. They do not use constants.py.
@@ -8,12 +9,20 @@ with literal constants. They do not use constants.py.
     Herron and Langway (1980), Stevens et al. Eqs. 4-6, rho in Mg m-3, b in m w.e. a-1:
         drho/dt = c (rho_i - rho)
         c0 = 11 exp(-10160 / RT) b,  c1 = 575 exp(-21400 / RT) b^0.5
+    Arthern et al. (2010) steady state, Stevens et al. Eq. 18, rho in kg m-3, b in kg m-2 a-1:
+        c0 = 0.07 b g exp(-Ec / RT + Eg / RTm),  c1 = 0.03 b g exp(-Ec / RT + Eg / RTm)
+        Ec = 60 kJ mol-1, Eg = 42.4 kJ mol-1
+    Kuipers Munneke et al. (2015), Stevens et al. Eq. 20:
+        M0 = 1.042 - 0.0916 ln(b),  M1 = 1.734 - 0.2039 ln(b),  c0(KM) = M0 c0,  c1(KM) = M1 c1
 
 Choices in the code that the papers do not give:
 
-- Zone 1 is rho < 550 kg m-3 and zone 2 is rho >= 550 kg m-3. Eq. 6 puts
+- Zone 1 is rho < 550 kg m-3 and zone 2 is rho >= 550 kg m-3. Eqs. 6 and 18 put
   rho = 550 kg m-3 in zone 1. The rate is not continuous at 550 kg m-3.
-- One year is 365.25 days.
+- g = 9.8 m s-2 and one year is 365.25 days.
+- KuipersMunneke2015 limits M0 and M1 to at least 0.25. Eq. 20 has no limit.
+- KuipersMunneke2015 uses the mean annual temperature Tm in the grain-growth
+  term, after Steger et al. (2017). Kuipers Munneke et al. (2015) used T.
 
 The accumulation input of the tests is in m ice eq. a-1, as in the model
 (bdotSec and bdot_mean). The model converts it with rho_i = 917 kg m-3.
@@ -107,6 +116,20 @@ def _herron_langway(rho, T, b_ice, zone_1_limit=550.0):
     return c * (0.917 - rho / 1000.0) * 1000.0 / SECONDS_PER_YEAR
 
 
+def _km_multipliers(b):
+    '''M0 and M1 of Eq. 20 for b [kg m-2 a-1], before the limit of 0.25.'''
+    return 1.042 - 0.0916 * np.log(b), 1.734 - 0.2039 * np.log(b)
+
+
+def _kuipers_munneke(rho, T, T_mean, b_ice, zone_1_limit=550.0):
+    '''Eqs. 18 and 20.'''
+    b = b_ice * RHO_ICE
+    M0, M1 = (np.maximum(0.25, M) for M in _km_multipliers(b))
+    arrhenius = np.exp(-60.0e3 / (R_GAS * T) + 42.4e3 / (R_GAS * T_mean))
+    c = np.where(rho < zone_1_limit, M0 * 0.07, M1 * 0.03) * b * GRAVITY * arrhenius
+    return c * (RHO_ICE - rho) / SECONDS_PER_YEAR
+
+
 def _accumulation_inputs(bdot_type, b_ice):
     '''
     The accumulation inputs of _drho_dt and the rate of each node that the law
@@ -133,3 +156,82 @@ def test_HLdynamic_matches_herron_langway(bdot_type, T, b_ice):
     got = _drho_dt('HLdynamic', ZONE_DENSITIES, Tz, bdot_type, **inputs)
     expected = _herron_langway(ZONE_DENSITIES, Tz, b_node)
     np.testing.assert_allclose(got, expected, rtol=1e-12, atol=0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('law', ['HLdynamic', 'KuipersMunneke2015'])
+def test_a_node_at_550_uses_the_zone_2_equation(law):
+    '''Eqs. 6 and 18 put rho = 550 kg m-3 in zone 1. The code puts it in zone 2.'''
+    rho = np.array([549.0, 550.0, 551.0])
+    T, T_mean, b_ice = 253.15, 250.0, 0.3
+    got = _drho_dt(law, rho, T, 'mean', bdot_mean=b_ice, T_mean=T_mean)
+    if law == 'HLdynamic':
+        reference = lambda limit: _herron_langway(rho, T, b_ice, zone_1_limit=limit)
+    else:
+        reference = lambda limit: _kuipers_munneke(rho, T, T_mean, b_ice, zone_1_limit=limit)
+    np.testing.assert_allclose(got, reference(550.0), rtol=1e-12, atol=0)
+    paper = reference(np.nextafter(550.0, np.inf))  # rho <= 550 is zone 1
+    assert got[1] != pytest.approx(paper[1], rel=1e-2)
+
+
+# ---------------------------------------------------------------------------
+# KuipersMunneke2015
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('bdot_type', ['instant', 'mean'])
+@pytest.mark.parametrize('T', TEMPERATURES)
+@pytest.mark.parametrize('b_ice', ACCUMULATIONS)
+def test_KuipersMunneke2015_matches_arthern_with_km_multipliers(bdot_type, T, b_ice):
+    Tz = T + TEMPERATURE_OFFSETS
+    T_mean = T - 4.0  # Tm differs from each Tz, so a swap of T and Tm changes the result
+    inputs, b_node = _accumulation_inputs(bdot_type, b_ice)
+    got = _drho_dt('KuipersMunneke2015', ZONE_DENSITIES, Tz, bdot_type, T_mean=T_mean, **inputs)
+    expected = _kuipers_munneke(ZONE_DENSITIES, Tz, T_mean, b_node)
+    np.testing.assert_allclose(got, expected, rtol=1e-12, atol=0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('bdot_type', ['instant', 'mean'])
+@pytest.mark.parametrize('b_ice, floored', [(2.0, 'M1'), (8.0, 'M0 and M1')])
+def test_KuipersMunneke2015_multipliers_are_at_least_0_25(bdot_type, b_ice, floored):
+    '''
+    At 2 m ice eq. a-1 (1834 kg m-2 a-1), M1 of Eq. 20 is less than 0.25. At
+    8 m ice eq. a-1, M0 and M1 are both less than 0.25.
+    '''
+    M0, M1 = _km_multipliers(b_ice * RHO_ICE)
+    assert M1 < 0.25 and (M0 < 0.25) == (floored == 'M0 and M1')
+    T = 253.15 + TEMPERATURE_OFFSETS
+    if bdot_type == 'instant':
+        inputs = dict(bdot_instant=b_ice, bdot_mean=0.1)
+    else:
+        inputs = dict(bdot_instant=0.1, bdot_mean=b_ice)
+    got = _drho_dt('KuipersMunneke2015', ZONE_DENSITIES, T, bdot_type, T_mean=250.0, **inputs)
+    expected = _kuipers_munneke(ZONE_DENSITIES, T, 250.0, b_ice)
+    np.testing.assert_allclose(got, expected, rtol=1e-12, atol=0)
+    zone_2 = ZONE_DENSITIES >= 550.0
+    np.testing.assert_allclose(  # the limit holds with the multiplier 0.25
+        got[zone_2],
+        0.25 * 0.03 * b_ice * RHO_ICE * GRAVITY * (RHO_ICE - ZONE_DENSITIES[zone_2]) / SECONDS_PER_YEAR
+        * np.exp(-60.0e3 / (R_GAS * T[zone_2]) + 42.4e3 / (R_GAS * 250.0)),
+        rtol=1e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('bdot_type', ['instant', 'mean'])
+def test_KuipersMunneke2015_grain_growth_term_uses_the_mean_annual_temperature(bdot_type):
+    '''
+    Steger et al. (2017): Eg is divided by R Tm, not by R T. A change of Tm
+    alone multiplies the rate by exp(Eg/R (1/Tm2 - 1/Tm1)). A change of T alone
+    multiplies it by exp(-Ec/R (1/T2 - 1/T1)).
+    '''
+    T, b_ice = 253.15 + TEMPERATURE_OFFSETS, 0.3
+
+    def rate(Tz, T_mean):
+        return _drho_dt('KuipersMunneke2015', ZONE_DENSITIES, Tz, bdot_type,
+                        bdot_instant=b_ice, bdot_mean=b_ice, T_mean=T_mean)
+
+    np.testing.assert_allclose(rate(T, 255.0) / rate(T, 245.0),
+                               np.exp(42.4e3 / R_GAS * (1 / 255.0 - 1 / 245.0)), rtol=1e-12)
+    np.testing.assert_allclose(rate(T + 10.0, 250.0) / rate(T, 250.0),
+                               np.exp(-60.0e3 / R_GAS * (1 / (T + 10.0) - 1 / T)), rtol=1e-12)
