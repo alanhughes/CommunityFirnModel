@@ -123,5 +123,23 @@ This benchmark is pure water, where liquid content *is* a single-valued function
 
 Full implementation details, caveats, and references for each solver are documented in the ``transient_solve_*`` function docstrings in ``solver.py``.
 
+.. _solver-diagnostics:
+
+Solver diagnostics
+==================
+
+Each call of a meltwater solver adds one row to ``diagnostics_<solver>.csv``. The model writes this file to the working folder at the end of the run. The column ``energy_resid`` is the energy residual of the call [J m-2]. It is the change of enthalpy in the interior cells, minus the conduction flux into them across the top face.
+
+The energy residual uses the cells 1 to n-2 only:
+
+- Cell 0 has a Dirichlet temperature. Its row is a boundary condition, not an energy balance.
+- The last cell has a zero-gradient boundary condition. Its row copies the temperature of the cell above, so it is not a control volume.
+
+For ``decp``, the residual uses the flux of each sub-step. A flux calculated from the final temperature is not the flux that the sub-steps used.
+
+The ``enthalpy`` solver moves spurious liquid water back to ice (the overshoot clamp). It reports the clamped mass from the last Picard iteration only, because only that iteration changes the returned state. If the clamped mass in a step is more than 0.05 kg m-2, ``refreezeDiff`` prints a message.
+
+The ``energy_resid`` values in diagnostics files from CFM 3.2.0 include the last cell and, for ``decp``, a full-step flux. Thus they are different from the current values. The model results do not change.
+
 Reference:
 Tubini, N., Gruber, S., and Rigon, R. (2021). A method for solving heat transfer with phase change in ice or soil that allows for large time steps while guaranteeing energy conservation. *The Cryosphere*, 15, 2541-2568. https://doi.org/10.5194/tc-15-2541-2021
