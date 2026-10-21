@@ -121,9 +121,10 @@ def _km_multipliers(b):
     return 1.042 - 0.0916 * np.log(b), 1.734 - 0.2039 * np.log(b)
 
 
-def _kuipers_munneke(rho, T, T_mean, b_ice, zone_1_limit=550.0):
-    '''Eqs. 18 and 20.'''
-    b = b_ice * RHO_ICE
+def _kuipers_munneke(rho, T, T_mean, b_ice, zone_1_limit=550.0, b=None):
+    '''Eqs. 18 and 20. b [kg m-2 a-1] replaces b_ice when it is given.'''
+    if b is None:
+        b = b_ice * RHO_ICE
     M0, M1 = (np.maximum(0.25, M) for M in _km_multipliers(b))
     arrhenius = np.exp(-60.0e3 / (R_GAS * T) + 42.4e3 / (R_GAS * T_mean))
     c = np.where(rho < zone_1_limit, M0 * 0.07, M1 * 0.03) * b * GRAVITY * arrhenius
@@ -235,3 +236,36 @@ def test_KuipersMunneke2015_grain_growth_term_uses_the_mean_annual_temperature(b
                                np.exp(42.4e3 / R_GAS * (1 / 255.0 - 1 / 245.0)), rtol=1e-12)
     np.testing.assert_allclose(rate(T + 10.0, 250.0) / rate(T, 250.0),
                                np.exp(-60.0e3 / R_GAS * (1 / (T + 10.0) - 1 / T)), rtol=1e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('T', TEMPERATURES)
+@pytest.mark.parametrize('dz', [0.05, 0.2])
+def test_KuipersMunneke2015_stress_uses_ten_times_the_layer_mass(T, dz):
+    '''
+    bdot_type "stress" is not a published equation, and docs/running/json.rst
+    says that it is in progress. The code uses 10 rho dz [kg m-2] in place of b
+    [kg m-2 a-1] in Eqs. 18 and 20. It does not use sigma. This test records
+    that behaviour.
+    '''
+    Tz = T + TEMPERATURE_OFFSETS
+    dz = np.full(5, dz)
+    got = _drho_dt('KuipersMunneke2015', ZONE_DENSITIES, Tz, 'stress', bdot_mean=0.3,
+                   T_mean=250.0, dz=dz, sigma=np.full(5, 1.0e5))
+    expected = _kuipers_munneke(ZONE_DENSITIES, Tz, 250.0, None, b=10.0 * ZONE_DENSITIES * dz)
+    np.testing.assert_allclose(got, expected, rtol=1e-12, atol=0)
+
+
+@pytest.mark.unit
+@pytest.mark.xfail(strict=True, reason='KuipersMunneke2015 "stress" uses 10 x the layer mass, not the stress')
+def test_KuipersMunneke2015_stress_rate_does_not_depend_on_the_layer_thickness():
+    '''
+    A densification rate is a property of the firn at a node: rho, T and the
+    stress. Two columns with the same rho, T and sigma at each node, but with
+    a different node thickness, must have the same rate.
+    '''
+    T = 253.15 + TEMPERATURE_OFFSETS
+    sigma = np.array([1.0e3, 5.0e3, 2.0e4, 5.0e4, 1.0e5])  # Pa
+    thin, thick = (_drho_dt('KuipersMunneke2015', ZONE_DENSITIES, T, 'stress', bdot_mean=0.3,
+                            T_mean=250.0, dz=np.full(5, dz), sigma=sigma) for dz in (0.05, 0.1))
+    np.testing.assert_allclose(thin, thick, rtol=1e-12)
