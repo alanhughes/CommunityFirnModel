@@ -1,7 +1,7 @@
 '''
-Tests for the densification laws HLdynamic and KuipersMunneke2015 in
+Tests for the densification laws HLdynamic, KuipersMunneke2015 and Crocus in
 physics.py against the equations of Stevens et al. (2020, Geosci. Model Dev.
-13, 4355-4377).
+13, 4355-4377) and Verjans et al. (2019, The Cryosphere 13, 1819-1842).
 
 The reference values are calculated in this file from the published equations,
 with literal constants. They do not use constants.py.
@@ -14,6 +14,11 @@ with literal constants. They do not use constants.py.
         Ec = 60 kJ mol-1, Eg = 42.4 kJ mol-1
     Kuipers Munneke et al. (2015), Stevens et al. Eq. 20:
         M0 = 1.042 - 0.0916 ln(b),  M1 = 1.734 - 0.2039 ln(b),  c0(KM) = M0 c0,  c1(KM) = M1 c1
+    Crocus (Vionnet et al., 2012), Stevens et al. Eq. 22 and Verjans et al. Eqs. 1-3:
+        drho/dt = rho sigma / eta
+        eta = f1 f2 eta0 (rho / c_eta) exp(a_eta (T_melt - T) + b_eta rho)
+        f1 = 1 / (1 + 60 theta),  f2 = 4,  eta0 = 7.62237e6 kg s-1 m-1,
+        a_eta = 0.1 K-1,  b_eta = 0.023 m3 kg-1,  c_eta = 358 kg m-3,  T_melt = 273.15 K
 
 Choices in the code that the papers do not give:
 
@@ -23,6 +28,9 @@ Choices in the code that the papers do not give:
 - KuipersMunneke2015 limits M0 and M1 to at least 0.25. Eq. 20 has no limit.
 - KuipersMunneke2015 uses the mean annual temperature Tm in the grain-growth
   term, after Steger et al. (2017). Kuipers Munneke et al. (2015) used T.
+- Crocus is a hybrid. Eq. 22 applies only for rho < 450 kg m-3. For
+  rho >= 450 kg m-3, the code uses the zone 2 rate c1(KM) (rho_i - rho), with
+  bdot_mean. The liquid-water factor f1 has no effect there.
 
 The accumulation input of the tests is in m ice eq. a-1, as in the model
 (bdotSec and bdot_mean). The model converts it with rho_i = 917 kg m-3.
@@ -129,6 +137,12 @@ def _kuipers_munneke(rho, T, T_mean, b_ice, zone_1_limit=550.0, b=None):
     arrhenius = np.exp(-60.0e3 / (R_GAS * T) + 42.4e3 / (R_GAS * T_mean))
     c = np.where(rho < zone_1_limit, M0 * 0.07, M1 * 0.03) * b * GRAVITY * arrhenius
     return c * (RHO_ICE - rho) / SECONDS_PER_YEAR
+
+
+def _crocus(rho, T, sigma, theta):
+    f1 = 1.0 / (1.0 + 60.0 * theta)
+    eta = f1 * 4.0 * 7.62237e6 * rho / 358.0 * np.exp(0.1 * (273.15 - T) + 0.023 * rho)
+    return rho * sigma / eta
 
 
 def _accumulation_inputs(bdot_type, b_ice):
@@ -269,3 +283,71 @@ def test_KuipersMunneke2015_stress_rate_does_not_depend_on_the_layer_thickness()
     thin, thick = (_drho_dt('KuipersMunneke2015', ZONE_DENSITIES, T, 'stress', bdot_mean=0.3,
                             T_mean=250.0, dz=np.full(5, dz), sigma=sigma) for dz in (0.05, 0.1))
     np.testing.assert_allclose(thin, thick, rtol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# Crocus
+
+CROCUS_DENSITIES = np.array([300.0, 340.0, 380.0, 420.0, 449.0])  # kg m-3, all below 450
+CROCUS_STRESS = np.array([3.0e2, 2.0e3, 6.0e3, 1.5e4, 3.0e4])  # Pa
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('T', TEMPERATURES)
+@pytest.mark.parametrize('b_ice', ACCUMULATIONS)
+def test_Crocus_dry_matches_vionnet(T, b_ice):
+    '''Below 450 kg m-3 the rate does not depend on the accumulation rate.'''
+    Tz = T + TEMPERATURE_OFFSETS
+    got = _drho_dt('Crocus', CROCUS_DENSITIES, Tz, 'mean', bdot_instant=b_ice, bdot_mean=b_ice,
+                   sigma=CROCUS_STRESS)
+    expected = _crocus(CROCUS_DENSITIES, Tz, CROCUS_STRESS, theta=0.0)
+    np.testing.assert_allclose(got, expected, rtol=1e-12, atol=0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('T', [273.15, 268.15])
+@pytest.mark.parametrize('b_ice', ACCUMULATIONS)
+def test_Crocus_wet_viscosity_factor_uses_the_volumetric_water_content(T, b_ice):
+    '''
+    Verjans et al. (2019), Eq. 3: f1 = 1 / (1 + 60 theta), with theta the
+    volumetric water content [m3 m-3]. The CFM gives LWC as a water thickness
+    [m] for each node, so theta = LWC / dz. The node thicknesses are not 1 m, so
+    a factor 1 / (1 + 60 LWC) gives a different result.
+    '''
+    dz = np.array([0.05, 0.1, 0.2, 0.08, 0.15])  # m
+    theta = np.array([0.0, 0.005, 0.02, 0.05, 0.08])  # m3 m-3
+    Tz = np.full(5, T)
+    got = _drho_dt('Crocus', CROCUS_DENSITIES, Tz, 'mean', bdot_instant=b_ice, bdot_mean=b_ice,
+                   sigma=CROCUS_STRESS, dz=dz, LWC=theta * dz)
+    np.testing.assert_allclose(got, _crocus(CROCUS_DENSITIES, Tz, CROCUS_STRESS, theta),
+                               rtol=1e-12, atol=0)
+    dry = _drho_dt('Crocus', CROCUS_DENSITIES, Tz, 'mean', bdot_instant=b_ice, bdot_mean=b_ice,
+                   sigma=CROCUS_STRESS, dz=dz)
+    np.testing.assert_allclose(got / dry, 1.0 + 60.0 * theta, rtol=1e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('bdot_type', ['instant', 'mean'])
+@pytest.mark.parametrize('T', TEMPERATURES)
+@pytest.mark.parametrize('b_ice', ACCUMULATIONS)
+def test_Crocus_uses_kuipers_munneke_zone_2_at_450_and_above(bdot_type, T, b_ice):
+    '''
+    The code is a hybrid of Crocus and KuipersMunneke2015. For rho >= 450 kg m-3
+    the rate is c1(KM) (rho_i - rho), with M1, 0.03 and bdot_mean, also for
+    450 <= rho < 550 kg m-3 and for bdot_type "instant". The wet factor f1 has
+    no effect there. Stevens et al. (2020) and Verjans et al. (2019) give
+    Eq. 22 for all densities.
+    '''
+    rho = np.array([350.0, 449.0, 450.0, 500.0, 600.0, 800.0])
+    Tz = T + np.array([0.0, -1.5, 1.0, -0.5, 2.0, 0.5])
+    dz = np.full(6, 0.1)
+    theta = np.full(6, 0.03)
+    sigma = np.array([2.0e3, 1.5e4, 1.6e4, 3.0e4, 8.0e4, 3.0e5])
+    T_mean = T - 4.0
+    b_node = b_ice * np.array([1.0, 1.2, 0.8, 1.1, 0.9, 1.05])
+    got = _drho_dt('Crocus', rho, Tz, bdot_type, bdot_instant=3.0 * b_ice, bdot_mean=b_node,
+                   T_mean=T_mean, sigma=sigma, dz=dz, LWC=theta * dz)
+    below = rho < 450.0
+    expected = np.where(below, _crocus(rho, Tz, sigma, theta),
+                        _kuipers_munneke(rho, Tz, T_mean, b_node, zone_1_limit=0.0))
+    np.testing.assert_allclose(got, expected, rtol=1e-12, atol=0)
