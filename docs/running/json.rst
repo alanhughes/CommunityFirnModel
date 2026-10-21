@@ -270,11 +270,18 @@ D_surf
 
 bdot_type
 ---------
-  The type of accumulation rate to use for the densification physics. ‘Instant’ is the instantaneous value (i.e. at that time step) of accumulation, ‘mean’ is the mean accumulation over the lifetime of a parcel of firn. (‘Stress’ is in progress and will use the stress directly).
+  The accumulation rate that the densification law (**physRho**) uses. Many empirical laws use the accumulation rate as a proxy for the load on the firn. In a steady state, the mass of firn above a node is the accumulation rate multiplied by the age of the node.
+
+  - ``mean`` -- for each node, the mean accumulation rate since the node was at the surface. The CFM divides the mass of the firn from the surface to the node by the age of the node.
+  - ``instant`` -- the accumulation rate of the current time step. All nodes use the same value. It can change much from one time step to the next.
+  - ``stress`` -- not complete. Do not use it. No law uses the stress through this option.
+
+  Some laws calculate the rate from the stress, for example ``Crocus``. These laws do not read **bdot_type**.
 
   :type: ``string``
   :default: ``mean``
   :options: ``mean``,``instant``,``stress``
+  :units: :math:`\textrm{m ice eq. a}^{-1}`
 
 grid_outputs
 ------------
