@@ -44,7 +44,7 @@ The result of a failed check
 
 The **melt_strict** key in the .json configuration (see :doc:`../running/json`) sets what occurs when a check fails:
 
-- **melt_strict** false (default). The scheme prints a message and the run continues. This is the behavior of earlier CFM versions.
+- **melt_strict** false (default). The scheme prints a message and the run continues.
 - **melt_strict** true. The scheme raises ``melt.MeltCheckError`` and the run stops. The message gives the scheme, the check, the time step, and the recorded values, for example::
 
 	MeltCheckError: bucket: check 'budget_1' failed at step 7: {'ok': False, 'residual': 0.002, 'threshold': 0.001}

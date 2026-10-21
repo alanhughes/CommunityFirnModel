@@ -723,7 +723,7 @@ DirectRunoff
 
 RunoffZuoOerlemans
 ------------------
-  If True, lateral runoff of ponded water is computed with the Zuo and Oerlemans (1996) parameterization. Only used when **Ponding** is True. The runoff in one step is the excess water times *dt*/*t\**, where *t\** is the runoff time scale from **Slope**. If *dt* is longer than *t\**, the runoff is all of the excess water and not more.
+  If True, lateral runoff of ponded water is computed with the Zuo and Oerlemans (1996) parameterization. Only used when **Ponding** is True. The runoff in one step is the excess water times *dt*/*t\**, where *t\** is the runoff time scale from **Slope**. If *dt* is longer than *t\**, the runoff in the step is all of the excess water.
 
   :type: ``boolean``
   :default: ``false``
