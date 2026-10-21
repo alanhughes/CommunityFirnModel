@@ -68,6 +68,8 @@ In ``test_hl_analytic.py`` and ``test_liquid_water.py``, the test file calculate
      - ``hl_analytic`` (the spin-up profile) against the Herron and Langway (1980) density and age equations, in zone 1 and zone 2. A node on the boundary between the two zones stays in the profile.
    * - ``test_liquid_water.py``
      - The liquid-water functions of the **bucket** and **darcy** schemes against the equations in Verjans et al. (2019): water-holding capacity (Coléou and Lesaffre, 1998), saturated hydraulic conductivity (Calonne et al., 2012), van Genuchten parameters (Yamaguchi et al., 2012), Mualem relative conductivity, and Zuo and Oerlemans (1996) runoff. The Darcy flux solvers stay within the available water and pore space.
+   * - ``test_solvers.py``
+     - The tridiagonal solver against ``scipy.linalg.solve_banded``. ``transient_solve_TR`` against the erfc solution for a step change of temperature at the surface of a semi-infinite slab. The four meltwater solvers: energy conservation with latent heat, temperature at or below 0 °C, mass conservation, agreement with ``transient_solve_TR`` in a dry column, and the position of a refreezing front. The ``ahc`` energy and front tests are expected failures (see :doc:`../extras/meltwater_solver`).
    * - ``test_enthalpy_solver.py``
      - The ``enthalpy`` solver with liquid water in a layer below 0 °C. The solver refreezes this water with its latent heat.
    * - ``test_melt_diagnostics.py``

@@ -475,7 +475,7 @@ meltwater_solver
   - ``decp`` -- decoupled (operator-split) scheme.
   - ``ncz`` -- Newton-based scheme (Jordan-style).
 
-  If the key is omitted, the model defaults to ``enthalpy``. Refreezing is dispatched through ``refreezeDiff`` in ``diffusion.py``, which calls the corresponding ``transient_solve_*`` function in ``solver.py``. Per-time-step solver diagnostics are written to ``diagnostics_<solver>.csv`` at the end of the run. See :doc:`../extras/meltwater_solver` for guidance on which scheme to choose.
+  If the key is omitted, the model defaults to ``enthalpy``. Refreezing is dispatched through ``refreezeDiff`` in ``diffusion.py``, which calls the corresponding ``transient_solve_*`` function in ``solver.py``. Per-time-step solver diagnostics are written to ``diagnostics_<solver>.csv`` at the end of the run (see :ref:`solver-diagnostics`). See :doc:`../extras/meltwater_solver` for guidance on which scheme to choose.
 
   :type: ``string``
   :default: ``enthalpy``
