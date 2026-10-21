@@ -128,6 +128,15 @@ Full implementation details, caveats, and references for each solver are documen
 Solver diagnostics
 ==================
 
+Each call of a meltwater solver adds one row to ``diagnostics_<solver>.csv``. The model writes this file to the working folder at the end of the run. The column ``energy_resid`` is the energy residual of the call [J m-2]. It is the change of enthalpy in the interior cells, minus the conduction flux into them across the top face.
+
+The energy residual uses the cells 1 to n-2 only:
+
+- Cell 0 has a Dirichlet temperature. Its row is a boundary condition, not an energy balance.
+- The last cell has a zero-gradient boundary condition. Its row copies the temperature of the cell above, so it is not a control volume.
+
+For ``decp``, the residual uses the sum of the fluxes of the sub-steps, because these are the fluxes that changed the enthalpy.
+
 The ``enthalpy`` solver moves spurious liquid water back to ice (the overshoot clamp). It reports the clamped mass from the last Picard iteration only, because only that iteration changes the returned state. If the clamped mass in a step is more than 0.05 kg m-2, ``refreezeDiff`` prints a message.
 
 Reference:
