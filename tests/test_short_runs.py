@@ -25,8 +25,8 @@ def test_melt_without_sublimation_completes(short_config):
 
 @pytest.mark.conservation
 def test_darcy_completes(short_config):
-    # Before model year 1980 the darcy branch falls back to bucket. bucket
-    # returns 13 values (the last is dh_melt) and the fallback unpacked 12.
+    # The run starts before model year 1980. Before 1980 the darcy branch uses
+    # bucket for a wet step, and after it darcyscheme, so the run covers both.
     run = short_config(years=2, liquid='darcy', melt_strict=True)
     run.run()
     assert run.results_path.exists()
@@ -35,8 +35,7 @@ def test_darcy_completes(short_config):
 @pytest.mark.conservation
 def test_darcy_with_early_output_completes(short_config):
     # The first steps are dry. With output from the first step, update_dH
-    # read self.dh_melt before any branch had set it.
-    # See UWGlaciology/CommunityFirnModel#21.
+    # reads self.dh_melt at a dry step. See UWGlaciology/CommunityFirnModel#21.
     run = short_config(years=2, liquid='darcy', melt_strict=True, TWriteStart=0.0)
     run.run()
     assert run.results_path.exists()
@@ -46,12 +45,9 @@ def test_darcy_with_early_output_completes(short_config):
 @pytest.mark.parametrize('liquid', ['prefsnowpack', 'resingledomain'])
 @pytest.mark.parametrize('TWriteStart', [None, 0.0], ids=['output_1980', 'output_first_step'])
 def test_snowpack_scheme_completes(short_config, liquid, TWriteStart):
-    # __init__ set refreeze, runoff, meltvol and rainvol to 1-element arrays.
-    # The dry cases of these branches do not overwrite them, so NumPy 2.5
-    # raised at refreezing2check[iii] = self.refreeze. Both schemes also used
-    # the per-step array self.dt as one step length. The run starts at model
-    # year 1434 and reaches the scheme itself (not the bucket fallback) after
-    # 1980. With TWriteStart 0, update_dH reads dh_melt from the first step.
+    # The run starts at model year 1434 and has dry and wet steps before and
+    # after 1980. Before 1980 a wet step uses bucket, and after it the scheme
+    # itself. With TWriteStart 0, update_dH reads dh_melt from the first step.
     config_overrides = {} if TWriteStart is None else {'TWriteStart': TWriteStart}
     run = short_config(years=2, liquid=liquid, **config_overrides)
     run.run()
