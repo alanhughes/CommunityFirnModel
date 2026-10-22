@@ -12,8 +12,9 @@ constants.py, so an error in the code cannot also be in the reference.
     Zone 1 age:  t = ln[(rho_i - rho_0)/(rho_i - rho)] / (k0 A)
     Zone 2 age:  t = ln[(rho_i - 0.55)/(rho_i - rho)] / (k1 sqrt(A)) + t_0.55
 
-Densities are in Mg m-3, h in m, A in m w.e. a-1 and t in years. hl_analytic
-takes the accumulation in m ice equivalent a-1 and returns the age in seconds.
+Densities are in Mg m-3, h in m, A in m w.e. per year and t in years.
+hl_analytic takes the accumulation in m ice equivalent per year and returns
+the age in seconds.
 '''
 
 import numpy as np
@@ -27,7 +28,7 @@ RHO_CRITICAL = 0.550  # Mg m-3, boundary between zone 1 and zone 2
 RHO_CLOSE_OFF = 0.830  # Mg m-3
 SECONDS_PER_YEAR = 31557600.0
 
-# (temperature [K], accumulation [m ice eq. a-1]): from a cold, dry
+# (temperature [K], accumulation [m ice eq. per year]): from a cold, dry
 # East Antarctic site to a warm, wet Greenland site.
 SITES = [(218.0, 0.025), (242.0, 0.24), (253.0, 0.5), (263.0, 1.0)]
 SURFACE_DENSITIES = [300.0, 350.0, 400.0]  # kg m-3
