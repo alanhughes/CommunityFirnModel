@@ -56,7 +56,7 @@ Unit tests (``unit``)
 
 A unit test calls one function with a small, specified input. Where a published equation or an analytic solution exists, the test compares the result with it.
 
-In ``test_hl_analytic.py`` and ``test_liquid_water.py``, the test file calculates the reference values from the published equations, with literal constants. These tests do not call the CFM function under test to get the reference, and they do not import ``constants.py``. Thus an error in the code cannot also be in the reference. A change to the code that changes a result makes the test fail, so a change to the physics must also change the test. This makes an accidental change less likely.
+In ``test_hl_analytic.py``, ``test_liquid_water.py`` and ``test_densification.py``, the test file calculates the reference values from the published equations, with literal constants. These tests do not call the CFM function under test to get the reference, and they do not import ``constants.py``. Thus an error in the code cannot also be in the reference. A change to the code that changes a result makes the test fail, so a change to the physics must also change the test. This makes an accidental change less likely.
 
 .. list-table::
    :header-rows: 1
@@ -70,6 +70,8 @@ In ``test_hl_analytic.py`` and ``test_liquid_water.py``, the test file calculate
      - The liquid-water functions of the **bucket** and **darcy** schemes against the equations in Verjans et al. (2019): water-holding capacity (Coléou and Lesaffre, 1998), saturated hydraulic conductivity (Calonne et al., 2012), van Genuchten parameters (Yamaguchi et al., 2012), Mualem relative conductivity, and Zuo and Oerlemans (1996) runoff. The Darcy flux solvers stay within the available water and pore space.
    * - ``test_solvers.py``
      - The tridiagonal solver against ``scipy.linalg.solve_banded``. ``transient_solve_TR`` against the erfc solution for a step change of temperature at the surface of a semi-infinite slab. The four meltwater solvers: energy conservation with latent heat, temperature at or below 0 °C, mass conservation, agreement with ``transient_solve_TR`` in a dry column, and the position of a refreezing front. The ``ahc`` energy and front tests are expected failures (see :doc:`../extras/meltwater_solver`).
+   * - ``test_densification.py``
+     - The **physRho** laws ``HLdynamic``, ``KuipersMunneke2015`` and ``Crocus`` against the equations in Stevens et al. (2020), with both accumulation inputs: **bdot_type** ``instant`` and ``mean`` (see :doc:`json`). The tests give different values to inputs that the code can mix up: the instant and the mean accumulation rate, the values at different time steps, and the node temperature and the mean annual temperature. If the code reads the wrong input, the result changes and the test fails. ``HLdynamic``: Herron and Langway (1980). ``KuipersMunneke2015``: Arthern et al. (2010) with the Kuipers Munneke et al. (2015) multipliers, the lower limit of 0.25 on the multipliers, and the mean annual temperature in the grain-growth term (Steger et al., 2017). ``Crocus``: the viscosity of Vionnet et al. (2012), with the liquid-water factor of Verjans et al. (2019). At exactly 550 kg m-3, the code uses the zone 2 equation. Two tests record the present behaviour of the code where it differs from the papers. At 450 kg m-3 and above, ``Crocus`` uses the zone 2 rate of ``KuipersMunneke2015``. With **bdot_type** ``stress``, ``KuipersMunneke2015`` uses 10 times the node mass in place of the accumulation rate. A test that the ``stress`` rate does not depend on the node thickness is an expected failure.
    * - ``test_enthalpy_solver.py``
      - The ``enthalpy`` solver with liquid water in a layer below 0 °C. The solver refreezes this water with its latent heat.
    * - ``test_melt_diagnostics.py``
@@ -152,13 +154,23 @@ To run the workflow manually, use **Run workflow** in the **Actions** tab of the
 
 **References**
 
+*Arthern, R. J., Vaughan, D. G., Rankin, A. M., Mulvaney, R., and Thomas, E. R. (2010), In situ measurements of Antarctic snow compaction compared with predictions of models, J. Geophys. Res., 115, F03011, doi:10.1029/2009JF001306.*
+
 *Calonne, N., Geindreau, C., Flin, F., Morin, S., Lesaffre, B., Rolland du Roscoat, S., and Charrier, P. (2012), 3-D image-based numerical computations of snow permeability: links to specific surface area, density, and microstructural anisotropy, The Cryosphere, 6, 939–951, doi:10.5194/tc-6-939-2012.*
 
 *Coléou, C., and Lesaffre, B. (1998), Irreducible water saturation in snow: experimental results in a cold laboratory, Ann. Glaciol., 26, 64–68, doi:10.3189/1998AoG26-1-64-68.*
 
 *Herron, M. M., and Langway, C. C. (1980), Firn densification: an empirical model, J. Glaciol., 25(93), 373–385, doi:10.3189/S0022143000015239.*
 
+*Kuipers Munneke, P., Ligtenberg, S. R. M., Noël, B. P. Y., Howat, I. M., Box, J. E., Mosley-Thompson, E., McConnell, J. R., Steffen, K., Harper, J. T., Das, S. B., and van den Broeke, M. R. (2015), Elevation change of the Greenland Ice Sheet due to surface mass balance and firn processes, 1960–2014, The Cryosphere, 9, 2009–2025, doi:10.5194/tc-9-2009-2015.*
+
+*Steger, C. R., Reijmer, C. H., van den Broeke, M. R., Wever, N., Forster, R. R., Koenig, L. S., Kuipers Munneke, P., Lehning, M., Lhermitte, S., Ligtenberg, S. R. M., Miège, C., and Noël, B. P. Y. (2017), Firn meltwater retention on the Greenland Ice Sheet: a model comparison, Front. Earth Sci., 5, 3, doi:10.3389/feart.2017.00003.*
+
+*Stevens, C. M., Verjans, V., Lundin, J. M. D., Kahle, E. C., Horlings, A. N., Horlings, B. I., and Waddington, E. D. (2020), The Community Firn Model (CFM) v1.0, Geosci. Model Dev., 13, 4355–4377, doi:10.5194/gmd-13-4355-2020.*
+
 *Verjans, V., Leeson, A. A., Stevens, C. M., MacFerrin, M., Noël, B., and van den Broeke, M. R. (2019), Development of physically based liquid water schemes for Greenland firn-densification models, The Cryosphere, 13, 1819–1842, doi:10.5194/tc-13-1819-2019.*
+
+*Vionnet, V., Brun, E., Morin, S., Boone, A., Faroux, S., Le Moigne, P., Martin, E., and Willemet, J.-M. (2012), The detailed snowpack scheme Crocus and its implementation in SURFEX v7.2, Geosci. Model Dev., 5, 773–791, doi:10.5194/gmd-5-773-2012.*
 
 *Yamaguchi, S., Watanabe, K., Katsushima, T., Sato, A., and Kumakura, T. (2012), Dependence of the water retention curve of snow on snow characteristics, Ann. Glaciol., 53(61), 6–12, doi:10.3189/2012AoG61A001.*
 
