@@ -50,6 +50,7 @@ from merge import mergeall #VV
 from merge import mergesurf #VV
 from merge import mergenotsurf #VV
 from re_snowpack import resingledomain #VV
+from r1m_step_counters import check_column, print_last_year_summary
 from prefflow_snowpack import prefflow #VV
 from sublim import sublim #VV
 from ModelOutputs import ModelOutputs
@@ -1204,6 +1205,8 @@ class FirnDensityNoSpin:
 
             ######################
             ### MELT #############
+            if self.c['liquid'] == 'resingledomain':
+                check_column(self, iii, 'before the meltwater scheme')
             if self.MELT:
                 if ((iii==0) and ((self.c['liquid'] == 'prefsnowpack') or (self.c['liquid'] == 'resingledomain'))):
                     print('WARNING: prefsnowpack and resingledomain liquid schemes are still in development. email Max for more details.')
@@ -1290,6 +1293,7 @@ class FirnDensityNoSpin:
                     if self.modeltime[iii] >= 1980: # Apply dualperm from a certain date
                         if ((self.snowmeltSec[iii]>0.) or (np.any(self.LWC > 0.)) or (self.rainSec[iii] > 0.)): #i.e. there is water
                             self.rho, self.age, self.dz, self.Tz, self.z, self.mass, self.dzn, self.LWC, self.PLWC_mem, self.r2, self.refrozen, self.Trunoff, self.dh_melt = resingledomain(self,iii)
+                            check_column(self, iii, 'after resingledomain')
                             self.refreeze = np.sum(self.refrozen) #[m w.e.]
                             self.runoff   = self.Trunoff #[m w.e.]
                             self.meltvol = self.snowmeltSec[iii]*S_PER_YEAR*0.917 #[m w.e.]
@@ -1536,6 +1540,8 @@ class FirnDensityNoSpin:
             self.T50     = np.mean(self.Tz[self.z<50]) # Temperature at 50 
             
             self.rho[self.rho>RHO_I] = RHO_I
+            if self.c['liquid'] == 'resingledomain':
+                check_column(self, iii, 'after the heat solve')
 
             #############################################################
             ### write results as often as specified in the init method ##
@@ -1607,6 +1613,8 @@ class FirnDensityNoSpin:
                     #self.dz, self.z, self.rho, self.Tz, self.mass, self.sigma, self. mass_sum, self.age, self.bdot_mean, self.LWC, self.gridtrack, self.r2 = regrid(self)
                 if self.gridtrack[-1]!=3: #VV works for whatever the gridtrack value we have
                     self.dz, self.z, self.rho, self.Tz, self.mass, self.sigma, self. mass_sum, self.age, self.bdot_mean, self.LWC, self.gridtrack, self.r2 = regrid22(self,iii) #VV regrid22
+                    if self.c['liquid'] == 'resingledomain':
+                        check_column(self, iii, 'after regrid22')
 
             #VV (23/03/2021) checking that refreeze and runoff work fine
             if self.MELT:
@@ -1624,6 +1632,7 @@ class FirnDensityNoSpin:
                 # LFdiff = Lfluxin - Lfluxout
                 # LFdiffsum = LFdiffsum + LFdiff
         
+        print_last_year_summary(self)
         if self.write_diag:
             solver._diag_write(f'diagnostics_{self.c["meltwater_solver"]}.csv')
         # print(f'iteration count: {self.total_count}')

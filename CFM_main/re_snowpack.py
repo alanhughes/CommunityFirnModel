@@ -24,8 +24,10 @@ from fcts_snowpackflow import Micedryer
 # from fcts_snowpackflow import distribute_tostore_single
 
 from merge import mergesurf
+import r1m_step_counters
 
 def resingledomain(self,iii):
+    counters = r1m_step_counters.new_call_counters(self,iii)
     
     ##### First: melting of the surface layers, taken from melt.py #####
     melt_volume_IE      = self.snowmeltSec[iii] * S_PER_YEAR # This still has to be checked by Max (division by self.c['stpsPerYear']?) [m]
@@ -92,6 +94,8 @@ def resingledomain(self,iii):
     vert_res = 0.2 # maximal layer thickness allowed, with upstream weighted mean for MK at interfaces, we can take larger value
     rhoC,dzC,TzC,massC,lwcC,Plwc_memC,r2C = restrictdom(self)
     split_list,rho,dz,Tz,mass,lwc,Plwc_mem,r2 = splitCFM(rhoC,dzC,TzC,massC,lwcC,Plwc_memC,r2C,vert_res)    #print('len(lwc) after restrictdom is:',len(lwc))
+    counters['domain_nodes'] = len(dz)
+    counters['domain_depth_m'] = np.sum(dz)
     
     ### Parameters we might want to change according to different runs ###
     tstep = 900. # Frequency of exchange betwwen domains and of refreezing [s]
@@ -302,6 +306,8 @@ def resingledomain(self,iii):
     
     ##### Start the Global time loop #####
     while timer < dtCFM:
+        counters['windows'] += 1
+        r1m_step_counters.report_progress(counters,Mdeltat_new,bottom)
         
         if timer + tstep >= dtCFM: # make sure we end precisely at the time step of the CFM
             tstep = dtCFM - timer
@@ -330,6 +336,7 @@ def resingledomain(self,iii):
                 if Mliq_in*Mdeltat_new >= (rofflim*(Mtheta_sat[0]-Mthetar[0])+Mthetar[0]-Mtheta[0])*dz[0] and bottom>0:
                     if Mdeltat_new >= 60. and rho[0]<rhoimp: #We do this as long as time step is not too small and surface not impermeable
                         Mdeltat_new = Mdeltat_new/2
+                        counters['influx_halvings'] += 1
                         continue
                     elif Mdeltat_new < 60. or rho[0]>=rhoimp: #If time step is very small or surface impermeable
                         Mliq_in = 0. #Set influx to 0 and add this water to the provisional runoff
@@ -406,6 +413,7 @@ def resingledomain(self,iii):
                 Mlwc_old[0] = 1*Mlwc[0]
                 Mhead_old[0] = 1*Mhead[0]
         
+            counters['max_bottom'] = max(counters['max_bottom'],bottom)
             Miteration = 0 # Let's count the number of iterations required
                     
             delta_Mhead  = np.ones_like(dz) # Difference in head pressure between two iterative steps, calculated by TDMA
@@ -490,7 +498,8 @@ def resingledomain(self,iii):
                 MKbot        = np.append(MK_inter,0) # Kbot will determine outflux in every layer Kbot[-1] is at bottom layer (set to 0)
                 
                 ### Calculate analytically derivative of theta with respect to head (Ci in Zarba 1988 (3.10) and Celia 1990 (17)) ###
-                Mdtheta_dh[0:(bottom+1)] = -1* (Mtheta_sat[0:(bottom+1)]-Mthetar[0:(bottom+1)])/Sc[0:(bottom+1)] * \
+                with np.errstate(over='call',call=counters['overflow_dtheta_dh']):
+                  Mdtheta_dh[0:(bottom+1)] = -1* (Mtheta_sat[0:(bottom+1)]-Mthetar[0:(bottom+1)])/Sc[0:(bottom+1)] * \
                     (-m_vG[0:(bottom+1)]*n_vG[0:(bottom+1)]*alpha_vG[0:(bottom+1)]**n_vG[0:(bottom+1)]) * (abs(Mhead[0:(bottom+1)]))**(n_vG[0:(bottom+1)]-1) / (1+(alpha_vG[0:(bottom+1)]*(abs(Mhead[0:(bottom+1)])))**n_vG[0:(bottom+1)])**(m_vG[0:(bottom+1)]+1)
                 ##-1* as we use absolute value of head which is negative
                 
@@ -529,6 +538,8 @@ def resingledomain(self,iii):
                 ### Solve tridiagonal matrix ###
                 #delta_Mhead = NPtrid(a_diag,b_diag,c_diag,Rd)
                 delta_Mhead = TDMAsolver(a_diag,b_diag,c_diag,Rd)
+                if np.isscalar(delta_Mhead): # TDMAsolver returns -1 on a zero pivot
+                    counters['tdma_zero_pivot'] += 1
                 
                 ### Save values of head and theta at the last iterative step ###
                 Mtheta_previous[0:(bottom+1)] = Mtheta[0:(bottom+1)]
@@ -536,7 +547,10 @@ def resingledomain(self,iii):
                 
                 ### Assign new value to pressure head ###
                 Mhead[0:(bottom+1)] = Mhead[0:(bottom+1)] + delta_Mhead #[m]
-                Mtheta[0:(bottom+1)] = Mthetar[0:(bottom+1)] + (Mtheta_sat[0:(bottom+1)]-Mthetar[0:(bottom+1)])*(1/Sc[0:(bottom+1)])*(1+(alpha_vG[0:(bottom+1)]*(abs(Mhead[0:(bottom+1)])))**n_vG[0:(bottom+1)])**(-m_vG[0:(bottom+1)]) # []
+                if not np.all(np.isfinite(Mhead[0:(bottom+1)])):
+                    counters['nonfinite_head_solves'] += 1
+                with np.errstate(over='call',call=counters['overflow_theta_update']):
+                  Mtheta[0:(bottom+1)] = Mthetar[0:(bottom+1)] + (Mtheta_sat[0:(bottom+1)]-Mthetar[0:(bottom+1)])*(1/Sc[0:(bottom+1)])*(1+(alpha_vG[0:(bottom+1)]*(abs(Mhead[0:(bottom+1)])))**n_vG[0:(bottom+1)])**(-m_vG[0:(bottom+1)]) # []
                 
                 
                 MeffSat[0:(bottom+1)] = (Mtheta[0:(bottom+1)]-Mthetar[0:(bottom+1)])/(Mtheta_sat[0:(bottom+1)]-Mthetar[0:(bottom+1)]) # []
@@ -554,6 +568,7 @@ def resingledomain(self,iii):
                 
                 ### Back step from Wever 2014 (don't use back step for MB criterion, let model iterate further!)
                 if Miteration == 16 or np.any(Mhead[0:(bottom+1)]>0) or np.any(abs(delta_Mhead2[0:(bottom+1)])>1000) or np.max(MeffSat[0:(bottom+1)])>1.0:#test
+                    r1m_step_counters.count_backstep(counters,Miteration,Mhead,delta_Mhead2,MeffSat,bottom)
                     
                     # Assign old values and we will start again with a shorter time step #
                     Mtheta[0:(bottom+1)] = 1*Mtheta_old[0:(bottom+1)]
@@ -564,6 +579,7 @@ def resingledomain(self,iii):
                     Mdeltat_new = Mdeltat/2
                     Mflag = 1
                                     
+            counters['newton_iterations'] += Miteration
             ### According to number of iterations, adjust the next time step
             if Miteration <= 5 and Mflag == 0: # Increase next time step but don't exceed max time step value
                 Mdeltat_new = 1.25*Mdeltat
@@ -579,7 +595,9 @@ def resingledomain(self,iii):
                 if Mdeltat_new <= 10*deltat_min:
                     print('Too small Mdeltat, make the simulation crash, self.modeltime[iii] is:',self.modeltime[iii])
                     Mtheta_sat[0:10] = -1e9
+                    counters['guard_hits'] += 1
                 continue # go back to top of Matrix time loop
+            r1m_step_counters.count_accepted_substep(counters,Mdeltat,Mhead,Mtheta,Mlwc)
             
             if provrunoff > 0: # Now that Mdeltat definitely passed, we can add provrunoff to totrunoff
                 totrunoff += provrunoff
@@ -635,6 +653,9 @@ def resingledomain(self,iii):
         Mtheta,Mthetar,MeffSat,Mlwc,totrunoff = \
             runoff(dz,rho,Mhead,Mtheta,Mthetar,Mthetar_old,MeffSat,Mlwc,Mtheta_sat,theta_min_fr,crtn_theta,slope,rhoimp,noflow,tstep,totrunoff)
         Mhead  = -1*1/alpha_vG * ((Sc * MeffSat)**(-1/m_vG)-1)**(1/n_vG) # [m] Wever 2014 (3)
+        r1m_step_counters.check_finite_arrays('resingledomain after Mrefreezing and runoff',self.modeltime[iii],dz,rho=rho,Tz=Tz,Mlwc=Mlwc)
+        if not np.all(np.isfinite(Mhead)):
+            counters['nonfinite_head_window_end'] += 1
     
     if tostore > 0: #If there is some water to store in the bottom layers (aquifer)
         Mlwc,Plwc,totrunoff = distribute_tostore_single(dz,rho,tostore,Mlwc,Plwc,rhoimp,bigF,totrunoff) # redistribute the water stored
@@ -680,6 +701,7 @@ def resingledomain(self,iii):
     rhoC,dzC,TzC,massC,lwcC,Plwc_memC,r2C,refrozenC = combineCFM(split_list,rho,dz,Tz,mass,lwctot,Plwc_mem,r2,refrozenlay)
     self.rho,self.dz,self.Tz,self.mass,self.LWC,self.PLWC_mem,self.r2 = lengthendom(self,rhoC,dzC,TzC,massC,lwcC,Plwc_memC,r2C)
     self.refrozen = np.append(refrozenC,np.zeros(len(self.dz)-len(refrozenC))) # in deep layers not involved in flow routine, no refreezing occured
+    r1m_step_counters.record_call(self,counters)
 
     return self.rho,self.age,self.dz,self.Tz,self.z,self.mass,self.dzn,self.LWC,self.PLWC_mem,self.r2,self.refrozen,totrunoff,dh_melt
     
