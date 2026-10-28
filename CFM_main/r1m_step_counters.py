@@ -259,11 +259,11 @@ def _geometry_text(dz, z):
                      for k, v in column_geometry(dz, z).items())
 
 
-def check_column(self, iii, where, dump=None):
+def check_column(self, iii, where, dump=None, dump_kind='heat_solve'):
     '''
     Check z, dz, rho, Tz and LWC of the model column, and check that z
     increases. If a check fails and dump is a snapshot from
-    r1m_state_dumps.snapshot_state(), write it as a 'heat_solve' dump first.
+    r1m_state_dumps.snapshot_state(), write it as a dump of dump_kind first.
     '''
     try:
         check_finite_arrays(where, self.modeltime[iii], self.dz,
@@ -276,7 +276,7 @@ def check_column(self, iii, where, dump=None):
     except NonFiniteStateError as error:
         message = f'{error}; geometry: {_geometry_text(self.dz, self.z)}'
         if dump is not None:
-            path = r1m_state_dumps.write_dump(self, dump, 'heat_solve', where=where, error=message)
+            path = r1m_state_dumps.write_dump(self, dump, dump_kind, where=where, error=message)
             message = f'{message}; dump {path}'
         raise NonFiniteStateError(message) from None
 

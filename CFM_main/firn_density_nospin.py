@@ -1303,7 +1303,7 @@ class FirnDensityNoSpin:
                             if time.perf_counter() - r1m_start > r1m_state_dumps.SLOW_CALL_S:
                                 r1m_state_dumps.write_dump(self, r1m_input, 'resingledomain', outputs=r1m_state_dumps.copy_outputs(r1m_outputs))
                             self.rho, self.age, self.dz, self.Tz, self.z, self.mass, self.dzn, self.LWC, self.PLWC_mem, self.r2, self.refrozen, self.Trunoff, self.dh_melt = r1m_outputs
-                            check_column(self, iii, 'after resingledomain')
+                            check_column(self, iii, 'after resingledomain', dump=r1m_input, dump_kind='resingledomain')
                             self.refreeze = np.sum(self.refrozen) #[m w.e.]
                             self.runoff   = self.Trunoff #[m w.e.]
                             self.meltvol = self.snowmeltSec[iii]*S_PER_YEAR*0.917 #[m w.e.]
