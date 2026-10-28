@@ -413,7 +413,7 @@ def resingledomain(self,iii):
                 Mlwc_old[0] = 1*Mlwc[0]
                 Mhead_old[0] = 1*Mhead[0]
         
-            counters['max_bottom'] = max(counters['max_bottom'],bottom)
+            r1m_step_counters.count_bottom(counters,dz,bottom)
             Miteration = 0 # Let's count the number of iterations required
                     
             delta_Mhead  = np.ones_like(dz) # Difference in head pressure between two iterative steps, calculated by TDMA

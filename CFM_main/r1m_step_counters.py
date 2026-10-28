@@ -11,7 +11,11 @@ It must not change the model results.
 - record_call() writes one row to r1m_step_counters.csv in resultsFolder and
   prints one summary line for each model year.
 - check_column() and check_finite_arrays() raise NonFiniteStateError at the
-  first non-finite value or dz <= 0.
+  first non-finite value or dz <= 0. check_column() also raises if z does not
+  increase, and it can write a state dump before it raises.
+- record_geometry() writes one row for each time step to r1m_geometry.csv: the
+  thinnest node, the smallest step in z, and the largest difference between z
+  and the cumulative sum of dz.
 '''
 
 import os
@@ -20,8 +24,10 @@ import time
 import numpy as np
 
 from constants import S_PER_YEAR, RHO_I_MGM
+import r1m_state_dumps
 
 CSV_NAME = 'r1m_step_counters.csv'
+GEOMETRY_CSV_NAME = 'r1m_geometry.csv'
 
 CSV_COLUMNS = (
     'modeltime', 'step', 'wall_time_s', 'dt_s', 'melt_mwe', 'rain_mwe',
@@ -32,6 +38,13 @@ CSV_COLUMNS = (
     'nonfinite_head_solves', 'tdma_zero_pivot', 'nonfinite_accepted_substeps',
     'nonfinite_head_window_end', 'min_deltat_s', 'mean_deltat_s',
     'substeps_below_1s', 'substeps_below_1e-10s', 'guard_hits',
+    'max_bottom_depth_m', 'min_dz_newton_m', 'min_cfm_dz_entry_m', 'min_cfm_dz_exit_m',
+)
+
+GEOMETRY_COLUMNS = (
+    'modeltime', 'step', 'nodes', 'surface_dz_m', 'min_dz_m', 'min_dz_node',
+    'min_dz_depth_m', 'min_diff_z_m', 'min_diff_z_node', 'max_z_mismatch_m',
+    'nodes_dz_below_1mm',
 )
 
 PROGRESS_AFTER_S = 60.  # a call that takes longer prints a progress line every PROGRESS_EVERY windows
@@ -88,7 +101,17 @@ def new_call_counters(self, iii):
         'substeps_below_1s': 0,
         'substeps_below_1e-10s': 0,
         'guard_hits': 0,
+        'max_bottom_depth_m': 0.,
+        'min_dz_newton_m': np.inf,
+        'min_cfm_dz_entry_m': np.min(self.dz),
     }
+
+
+def count_bottom(counters, dz, bottom):
+    '''Record the deepest bottom and the thinnest layer of the Newton domain 0..bottom.'''
+    counters['max_bottom'] = max(counters['max_bottom'], bottom)
+    counters['max_bottom_depth_m'] = max(counters['max_bottom_depth_m'], np.sum(dz[0:(bottom+1)]))
+    counters['min_dz_newton_m'] = min(counters['min_dz_newton_m'], np.min(dz[0:(bottom+1)]))
 
 
 def count_backstep(counters, Miteration, Mhead, delta_Mhead2, MeffSat, bottom):
@@ -165,6 +188,7 @@ def record_call(self, counters):
     closed after each row, so the rows stay on disk if the run crashes.
     '''
     row = _csv_row(counters)
+    row['min_cfm_dz_exit_m'] = np.min(self.dz)
     path = os.path.join(self.c['resultsFolder'], CSV_NAME)
     first_call = not hasattr(self, 'r1m_year_totals')
     with open(path, 'w' if first_call else 'a') as f:
@@ -214,10 +238,66 @@ def check_finite_arrays(where, modeltime, dz, **arrays):
             f'first node {bad[0]} value {dz[bad[0]]}')
 
 
-def check_column(self, iii, where):
-    '''Check z, dz, rho, Tz and LWC of the model column.'''
-    check_finite_arrays(where, self.modeltime[iii], self.dz,
-                        z=self.z, rho=self.rho, Tz=self.Tz, LWC=self.LWC)
+def column_geometry(dz, z):
+    '''
+    Return the thinnest node, the smallest step in z, and the largest difference
+    between z and the cumulative sum of dz. The heat solve uses z, not dz, so a
+    step of zero in z gives a 0/0 in its node weights.
+    '''
+    z_from_dz = np.concatenate(([0.], np.cumsum(dz)[:-1]))
+    diff_z = np.diff(z)
+    i_dz = int(np.argmin(dz))
+    i_z = int(np.argmin(diff_z))
+    return {'nodes': len(dz), 'surface_dz_m': dz[0], 'min_dz_m': dz[i_dz], 'min_dz_node': i_dz,
+            'min_dz_depth_m': z[i_dz], 'min_diff_z_m': diff_z[i_z], 'min_diff_z_node': i_z,
+            'max_z_mismatch_m': np.max(np.abs(z - z_from_dz)),
+            'nodes_dz_below_1mm': int(np.sum(dz < 1e-3))}
+
+
+def _geometry_text(dz, z):
+    return ', '.join(f'{k} {v:.6g}' if isinstance(v, float) else f'{k} {v}'
+                     for k, v in column_geometry(dz, z).items())
+
+
+def check_column(self, iii, where, dump=None):
+    '''
+    Check z, dz, rho, Tz and LWC of the model column, and check that z
+    increases. If a check fails and dump is a snapshot from
+    r1m_state_dumps.snapshot_state(), write it as a 'heat_solve' dump first.
+    '''
+    try:
+        check_finite_arrays(where, self.modeltime[iii], self.dz,
+                            z=self.z, rho=self.rho, Tz=self.Tz, LWC=self.LWC)
+        bad = np.where(np.diff(self.z) <= 0.)[0]
+        if len(bad) > 0:
+            raise NonFiniteStateError(
+                f'{where}: modeltime {self.modeltime[iii]}, z does not increase at {len(bad)} of '
+                f'{len(self.z)-1} steps, first node {bad[0]}, z {float(self.z[bad[0]])!r} then {float(self.z[bad[0]+1])!r}')
+    except NonFiniteStateError as error:
+        message = f'{error}; geometry: {_geometry_text(self.dz, self.z)}'
+        if dump is not None:
+            path = r1m_state_dumps.write_dump(self, dump, 'heat_solve', where=where, error=message)
+            message = f'{message}; dump {path}'
+        raise NonFiniteStateError(message) from None
+
+
+def record_geometry(self, iii):
+    '''
+    Append one row to r1m_geometry.csv in resultsFolder. The first call of a
+    model run writes the file again with a header.
+    '''
+    row = column_geometry(self.dz, self.z)
+    row['modeltime'] = self.modeltime[iii]
+    row['step'] = iii
+    path = os.path.join(self.c['resultsFolder'], GEOMETRY_CSV_NAME)
+    first_row = not hasattr(self, 'r1m_geometry_rows')
+    with open(path, 'w' if first_row else 'a') as f:
+        if first_row:
+            f.write(','.join(GEOMETRY_COLUMNS) + '\n')
+            self.r1m_geometry_rows = 0
+        f.write(','.join(repr(float(row[k])) if isinstance(row[k], (float, np.floating)) else str(row[k])
+                         for k in GEOMETRY_COLUMNS) + '\n')
+    self.r1m_geometry_rows += 1
 
 
 def print_last_year_summary(self):

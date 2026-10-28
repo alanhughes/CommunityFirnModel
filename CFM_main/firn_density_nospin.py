@@ -50,7 +50,8 @@ from merge import mergeall #VV
 from merge import mergesurf #VV
 from merge import mergenotsurf #VV
 from re_snowpack import resingledomain #VV
-from r1m_step_counters import check_column, print_last_year_summary
+from r1m_step_counters import check_column, print_last_year_summary, record_geometry
+import r1m_state_dumps
 from prefflow_snowpack import prefflow #VV
 from sublim import sublim #VV
 from ModelOutputs import ModelOutputs
@@ -1292,7 +1293,16 @@ class FirnDensityNoSpin:
                     #VV You can choose a date to switch from bucket to prefflow, this should be easy to use from the json file
                     if self.modeltime[iii] >= 1980: # Apply dualperm from a certain date
                         if ((self.snowmeltSec[iii]>0.) or (np.any(self.LWC > 0.)) or (self.rainSec[iii] > 0.)): #i.e. there is water
-                            self.rho, self.age, self.dz, self.Tz, self.z, self.mass, self.dzn, self.LWC, self.PLWC_mem, self.r2, self.refrozen, self.Trunoff, self.dh_melt = resingledomain(self,iii)
+                            r1m_input = r1m_state_dumps.snapshot_state(self, iii)
+                            r1m_start = time.perf_counter()
+                            try:
+                                r1m_outputs = resingledomain(self,iii)
+                            except Exception as error:
+                                r1m_state_dumps.write_dump(self, r1m_input, 'resingledomain', error=repr(error))
+                                raise
+                            if time.perf_counter() - r1m_start > r1m_state_dumps.SLOW_CALL_S:
+                                r1m_state_dumps.write_dump(self, r1m_input, 'resingledomain', outputs=r1m_state_dumps.copy_outputs(r1m_outputs))
+                            self.rho, self.age, self.dz, self.Tz, self.z, self.mass, self.dzn, self.LWC, self.PLWC_mem, self.r2, self.refrozen, self.Trunoff, self.dh_melt = r1m_outputs
                             check_column(self, iii, 'after resingledomain')
                             self.refreeze = np.sum(self.refrozen) #[m w.e.]
                             self.runoff   = self.Trunoff #[m w.e.]
@@ -1485,6 +1495,12 @@ class FirnDensityNoSpin:
             ### All temperature work happens at the end of the time loop
 
             Ts_old = self.Tz[0]
+            if self.c['liquid'] == 'resingledomain':
+                heat_input = r1m_state_dumps.snapshot_state(self, iii)
+                if self.modeltime[iii] >= 1980:
+                    record_geometry(self, iii)
+                check_column(self, iii, 'before the heat solve', dump=heat_input)
+
             if self.c['manualT']: # manual temperature measurements are fed into CFM
                 tif = interpolate.interp1d(self.manualT_dep, self.manualT_temp[:,iii],kind='cubic')
                 self.Tz = tif(self.z)
@@ -1541,7 +1557,7 @@ class FirnDensityNoSpin:
             
             self.rho[self.rho>RHO_I] = RHO_I
             if self.c['liquid'] == 'resingledomain':
-                check_column(self, iii, 'after the heat solve')
+                check_column(self, iii, 'after the heat solve', dump=heat_input)
 
             #############################################################
             ### write results as often as specified in the init method ##
