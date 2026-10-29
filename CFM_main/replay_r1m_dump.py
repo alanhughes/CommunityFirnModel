@@ -11,6 +11,8 @@ Usage, from CFM_main:
   row goes to r1m_step_counters.csv in the output folder (default: a folder
   next to the dump). If the dump holds the outputs of the call in the run,
   check that the replay gives the same values.
+- A 'prefsnowpack' dump: the same for prefflow (prefsnowpack). It has no
+  counters.
 - A 'heat_solve' dump: print the column geometry and the nodes where the node
   weights of the heat solve are not finite. Then run the heat solve of the step
   again and give the first node with non-finite Tz.
@@ -25,10 +27,11 @@ import numpy as np
 
 from firn_density_nospin import FirnDensityNoSpin
 from re_snowpack import resingledomain
+from prefflow_snowpack import prefflow
 from diffusion import heatDiff, refreezeDiff
 from r1m_step_counters import column_geometry
 
-RESINGLEDOMAIN_OUTPUTS = ('rho', 'age', 'dz', 'Tz', 'z', 'mass', 'dzn', 'LWC', 'PLWC_mem', 'r2',
+SCHEME_OUTPUTS = ('rho', 'age', 'dz', 'Tz', 'z', 'mass', 'dzn', 'LWC', 'PLWC_mem', 'r2',
                           'refrozen', 'Trunoff', 'dh_melt')
 
 
@@ -42,15 +45,15 @@ def load_model(dump, out_folder):
     return model
 
 
-def replay_resingledomain(dump, model, step):
+def replay_scheme(scheme, dump, model, step):
     start = time.perf_counter()
-    outputs = resingledomain(model, step)
+    outputs = scheme(model, step)
     print(f'wall time {time.perf_counter() - start:.2f} s')
     if 'outputs' not in dump:
         print('the dump has no outputs of the run to compare')
         return
     differ = []
-    for name, ran, replayed in zip(RESINGLEDOMAIN_OUTPUTS, dump['outputs'], outputs):
+    for name, ran, replayed in zip(SCHEME_OUTPUTS, dump['outputs'], outputs):
         if not np.array_equal(np.asarray(ran), np.asarray(replayed), equal_nan=True):
             differ.append(name)
     print('outputs equal to the run' if not differ else f'outputs differ from the run: {differ}')
@@ -100,7 +103,9 @@ def main():
     print(f"{dump['kind']} dump: modeltime {dump['modeltime']}, step {dump['step']}, "
           f"not saved: {dump['skipped']}")
     if dump['kind'] == 'resingledomain':
-        replay_resingledomain(dump, model, step)
+        replay_scheme(resingledomain, dump, model, step)
+    elif dump['kind'] == 'prefsnowpack':
+        replay_scheme(prefflow, dump, model, step)
     elif dump['kind'] == 'heat_solve':
         replay_heat_solve(dump, model, step)
 

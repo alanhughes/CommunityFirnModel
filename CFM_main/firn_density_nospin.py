@@ -1264,7 +1264,16 @@ class FirnDensityNoSpin:
                     #VV You can choose a date to switch from bucket to prefflow, this should be easy to use from the json file
                     if self.modeltime[iii] >= 1980: # Apply dualperm from a certain date
                         if ((self.snowmeltSec[iii]>0.) or (np.any(self.LWC > 0.)) or (self.rainSec[iii] > 0.)): #i.e. there is water
-                            self.rho, self.age, self.dz, self.Tz, self.z, self.mass, self.dzn, self.LWC, self.PLWC_mem, self.r2, self.refrozen, self.Trunoff, self.dh_melt = prefflow(self,iii)
+                            dpm_input = r1m_state_dumps.snapshot_state(self, iii)
+                            dpm_start = time.perf_counter()
+                            try:
+                                dpm_outputs = prefflow(self,iii)
+                            except Exception as error:
+                                r1m_state_dumps.write_dump(self, dpm_input, 'prefsnowpack', error=repr(error))
+                                raise
+                            if time.perf_counter() - dpm_start > r1m_state_dumps.SLOW_CALL_S:
+                                r1m_state_dumps.write_dump(self, dpm_input, 'prefsnowpack', outputs=r1m_state_dumps.copy_outputs(dpm_outputs))
+                            self.rho, self.age, self.dz, self.Tz, self.z, self.mass, self.dzn, self.LWC, self.PLWC_mem, self.r2, self.refrozen, self.Trunoff, self.dh_melt = dpm_outputs
                             self.refreeze = np.sum(self.refrozen) #[m w.e.]
                             self.runoff   = self.Trunoff #[m w.e.]
                             self.meltvol = self.snowmeltSec[iii]*S_PER_YEAR*0.917 #[m w.e.]
