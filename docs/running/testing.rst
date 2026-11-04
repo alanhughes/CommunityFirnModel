@@ -78,6 +78,8 @@ In ``test_hl_analytic.py``, ``test_liquid_water.py`` and ``test_densification.py
      - The record of a failed meltwater check, with and without **melt_strict** (see :doc:`../extras/melt_checks`).
    * - ``test_fixtures.py``
      - The ``synthetic_column`` fixture gives the state arrays that the meltwater schemes read.
+   * - ``test_compare_commits.py``
+     - The script ``compare_commits.py`` (see `Compare two commits`_). The comparison reports a change of one bit, a change of the NaN positions, a missing dataset and a change of shape. The full check runs the code of each ref and removes its worktrees. It uses a small git repository with a stub in place of the model.
 
 Scheme tests (``scheme``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -141,6 +143,27 @@ The file ``tests/conftest.py`` gives two fixtures. The helpers are in ``tests/cf
 	    run = short_config(years=2, melt_strict=True)
 	    run.run()
 	    assert run.results_path.exists()
+
+Compare two commits
+-------------------
+
+The script ``tests/compare_commits.py`` checks that two commits give the same model results. Run it by hand before you close a change that must keep the results. The script reads commits only, so commit your work first.
+
+.. code-block:: bash
+
+	python tests/compare_commits.py <base of the PR> HEAD
+	python tests/compare_commits.py <base of the PR> HEAD --ignore refrozen
+	python tests/compare_commits.py <base of the PR> HEAD --start-year 1995
+
+For each ref, the script makes a temporary git worktree, runs the cases with the code of that ref, and removes the worktree. Both refs run on one machine, because the results of some schemes differ between machines. So a saved copy of the results cannot do this check.
+
+The cases are a 2-year run with **liquid** set to ``darcy`` and to ``bucket``, with the DYE-2 forcing from 1980 or from the year of ``--start-year``. All other keys come from ``example_df.json`` of the ref. The script turns on all outputs in **outputs_options** of both refs. It writes ``float64`` values at the nodes, because ``float32`` values on a grid can hide a small difference.
+
+The script compares each dataset of ``CFMresults.hdf5`` exactly: the shape, the NaN positions and each value. There is no tolerance. It reports a pass, or the first dataset that differs, with the first index, both values and the number of values that differ. The exit code is 0 if the results are equal, 1 if a dataset differs, and 2 if a ref is not found or a run fails. The option ``--ignore <dataset>`` skips a dataset that the change alters on purpose.
+
+The years 1980 and 1981 have little water. Neither case has runoff, and the ``darcy`` case has no liquid water at the write times. So a change that affects only those results can pass. From 1995, both cases have runoff and liquid water at the write times, so use ``--start-year 1995`` for a change that affects these results. The check then takes about 4 minutes in place of about 20 seconds, because ``darcy`` runs for each model year from 1980, and the spin-up repeats the window back in time.
+
+No CI job runs this script, because a change that alters the results on purpose would fail it.
 
 Continuous integration
 ----------------------
