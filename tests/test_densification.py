@@ -1,7 +1,24 @@
 '''
-Tests for the densification laws HLdynamic, KuipersMunneke2015 and Crocus in
-physics.py against the equations of Stevens et al. (2020, Geosci. Model Dev.
-13, 4355-4377) and Verjans et al. (2019, The Cryosphere 13, 1819-1842).
+Tests for the densification laws in physics.py.
+
+Equation tests: HLdynamic, KuipersMunneke2015 and Crocus against the equations
+of Stevens et al. (2020, Geosci. Model Dev. 13, 4355-4377) and Verjans et al.
+(2019, The Cryosphere 13, 1819-1842).
+
+Property tests: each law in physics.py that a model run can use, against these
+properties, which do not need a reference equation:
+
+- The rate is not negative.
+- The rate is finite: for rho from 300 to 917 kg m-3, in a layered column, and
+  at the melting point.
+- The rate goes to 0 as rho goes to 917 kg m-3.
+- The rate increases with the temperature at constant rho, stress and
+  accumulation.
+- bdot_type "mean" and "instant" give a rate at each node below the ice density,
+  or stop the run on purpose.
+
+Where a law breaks a property, the test leaves out that law or that condition.
+This file lists each one, with the cause in the code.
 
 The reference values are calculated in this file from the published equations,
 with literal constants. They do not use constants.py.
@@ -37,9 +54,12 @@ The accumulation input of the tests is in m ice eq. a-1, as in the model
 (bdotSec and bdot_mean). The model converts it with rho_i = 917 kg m-3.
 '''
 
+import inspect
+
 import numpy as np
 import pytest
 
+from config_validation import ALLOWED_VALUES
 from physics import FirnPhysics
 
 R_GAS = 8.314  # J mol-1 K-1
@@ -55,8 +75,13 @@ TEMPERATURE_OFFSETS = np.array([0.0, -1.5, 1.0, -0.5, 2.0])  # K, so that each n
 ZONE_DENSITIES = np.array([320.0, 420.0, 540.0, 560.0, 760.0])  # kg m-3, zone 1 and zone 2
 
 
+def _node_age(n):
+    '''The age [s] of each node. The surface node is one year old, so each age is above 0.'''
+    return (np.arange(n) + 1.0) * SECONDS_PER_YEAR
+
+
 def _drho_dt(law, rho, Tz, bdot_type='mean', bdot_instant=0.3, bdot_mean=None,
-             T_mean=250.0, sigma=None, dz=None, LWC=None):
+             T_mean=250.0, sigma=None, dz=None, LWC=None, extra_inputs=None):
     '''
     drho_dt [kg m-3 s-1] from FirnPhysics(PhysParams).<law>() for a column of
     len(rho) nodes. The keys of PhysParams are the keys that FirnDensityNoSpin
@@ -64,7 +89,8 @@ def _drho_dt(law, rho, Tz, bdot_type='mean', bdot_instant=0.3, bdot_mean=None,
 
     bdot_instant [m ice eq. a-1] is the accumulation rate of step ITERATION.
     bdot_mean [m ice eq. a-1] is the accumulation rate of each node. T_mean [K]
-    is the mean annual temperature of step ITERATION.
+    is the mean annual temperature of step ITERATION. extra_inputs adds keys to
+    PhysParams or replaces them, for the laws that need more inputs.
     '''
     rho = np.asarray(rho, dtype=float)
     n = rho.size
@@ -98,7 +124,7 @@ def _drho_dt(law, rho, Tz, bdot_type='mean', bdot_instant=0.3, bdot_mean=None,
         'dt':            SECONDS_PER_YEAR / STEPS_PER_YEAR,
         'Ts':            T_series,
         'r2':            np.full(n, 1.0e-8),
-        'age':           np.arange(n) * SECONDS_PER_YEAR,
+        'age':           _node_age(n),
         'physGrain':     False,
         'calcGrainSize': False,
         'r2s0':          1.0e-8,
@@ -110,6 +136,7 @@ def _drho_dt(law, rho, Tz, bdot_type='mean', bdot_instant=0.3, bdot_mean=None,
         'MELT':          bool(np.any(LWC > 0)),
         'FirnAir':       False,
     }
+    PhysParams.update(extra_inputs or {})
     return getattr(FirnPhysics(PhysParams), law)()['drho_dt']
 
 
@@ -352,3 +379,240 @@ def test_Crocus_uses_kuipers_munneke_zone_2_at_450_and_above(bdot_type, T, b_ice
     expected = np.where(below, _crocus(rho, Tz, sigma, theta),
                         _kuipers_munneke(rho, Tz, T_mean, b_node, zone_1_limit=0.0))
     np.testing.assert_allclose(got, expected, rtol=1e-12, atol=0)
+
+
+# ---------------------------------------------------------------------------
+# Properties of all laws
+
+LAWS_WITH_A_RATE = [
+    'Arthern2010S', 'Arthern2010T', 'Barnola1991', 'Breant2017', 'Brils2022', 'Crocus',
+    'GSFC2020', 'Goujon2003', 'HLSigfus', 'HLdynamic', 'Helsen2008', 'KuipersMunneke2015',
+    'Li2004', 'Li2011', 'Li2015', 'Ligtenberg2011', 'MaxSP',
+    'Morris2014', 'Simonsen2013', 'Veldhuijsen2023', 'Yamazaki1993',
+]
+LAWS_WITH_NO_RATE = ['Marshall1999']  # not yet written: the method returns None
+# The validator rejects these laws, and no other code calls them, so a model run cannot use them.
+LAWS_THAT_CANNOT_BE_SELECTED = ['ArthernWingham1998', 'Max2018', 'Max2018b']
+FIRNPHYSICS_METHODS_THAT_ARE_NOT_LAWS = {'__init__', 'surfacegrain', 'graincalc'}
+
+# Inputs that FirnDensityNoSpin gives only to some laws. The node spacing of the
+# columns below is 0.5 kg m-3, so that a node falls in the narrow density range
+# that Goujon2003 needs at the zone 1 to zone 2 transition.
+GOUJON_INPUTS = {'Gamma_Gou': 0.0, 'Gamma_old_Gou': 0.0, 'Gamma_old2_Gou': 0.0, 'ind1_old': 0}
+LAW_INPUTS = {
+    'Arthern2010T': {'physGrain': True},
+    'Breant2017': GOUJON_INPUTS,  # FirnDensityNoSpin does not give them to this law
+    'Goujon2003': GOUJON_INPUTS,
+}
+MORRIS_ACTIVATION_ENERGY = 110.0e3  # J mol-1, the default of FirnDensityNoSpin
+
+NODE_THICKNESS = 0.03  # m, so that rho = 550 kg m-3 is at about 15 m
+SMOOTH_COLUMN = np.concatenate([np.arange(300.25, 907.0, 0.5),
+                                [907.0, 912.0, 916.0, 916.9, 916.99, RHO_ICE]])  # kg m-3
+LOWEST_ACTIVATION_ENERGY = 10.0e3  # J mol-1. Q1 of Herron and Langway (1980) is the lowest, 10.16 kJ mol-1.
+
+# The conditions of the sign and NaN tests.
+PROPERTY_T_MEANS = [233.15, 253.15, 258.15, 263.15, 271.15]  # K
+PROPERTY_ACCUMULATIONS = [0.1, 0.5, 1.0]  # m ice eq. a-1
+PROPERTY_CONDITIONS = [(T_mean, b_ice) for T_mean in PROPERTY_T_MEANS for b_ice in PROPERTY_ACCUMULATIONS]
+
+# The conditions in which a law gives a negative rate, with the cause. The test leaves them out.
+NEGATIVE_RATES = {
+    'Breant2017': (lambda T_mean, b_ice: T_mean >= 271.15,
+                   'the ice density of the law is below 917 kg m-3 for Tm above 269.6 K'),
+    'Goujon2003': (lambda T_mean, b_ice: T_mean >= 271.15,
+                   'the ice density of the law is below 917 kg m-3 for Tm above 269.6 K'),
+    'Helsen2008': (lambda T_mean, b_ice: T_mean >= 263.15,
+                   'the factor 76.138 - 0.28965 Tm is negative for Tm above 262.86 K'),
+    'Li2004': (lambda T_mean, b_ice: T_mean >= 258.15,
+               'the factor 139.21 - 0.542 Tm is negative for Tm above 256.85 K'),
+    'Li2011': (lambda T_mean, b_ice: T_mean >= 271.15 or (T_mean >= 263.15 and b_ice <= 0.1),
+               'beta1 is negative for a warm Tm and a low accumulation rate'),
+    'Li2015': (lambda T_mean, b_ice: T_mean >= 271.15 or b_ice >= 1.0,
+               'beta1 is negative for Tm above 270.13 K, and beta2 at a high accumulation rate'),
+}
+
+
+def _law_rate(law, rho=SMOOTH_COLUMN, T=253.15, bdot_type='mean', b_ice=0.3, T_mean=250.0):
+    '''
+    drho_dt [kg m-3 s-1] of any law in physics.py, for a column at the
+    accumulation rate b_ice [m ice eq. a-1]. The stress is the weight of the
+    column. The viscosity calculations of some laws divide by a rate of 0 at the
+    ice density. The tests here do not read the viscosity, so they ignore this.
+    '''
+    rho = np.asarray(rho, dtype=float)
+    extra_inputs = dict(LAW_INPUTS.get(law, {}))
+    if law == 'Morris2014':
+        # The form of the thermal history in FirnDensitySpin. It uses T_mean, so a change of T does not change it.
+        extra_inputs['QMorris'] = MORRIS_ACTIVATION_ENERGY
+        extra_inputs['Hx'] = np.exp(-MORRIS_ACTIVATION_ENERGY / (R_GAS * T_mean)) * _node_age(rho.size)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        return _drho_dt(law, rho, T, bdot_type, bdot_instant=b_ice, bdot_mean=b_ice, T_mean=T_mean,
+                        dz=np.full(rho.size, NODE_THICKNESS), extra_inputs=extra_inputs)
+
+
+def _accumulation_inputs_with_a_rate(law):
+    '''
+    The values of bdot_type that the property tests run. Each law has one branch of
+    code for each value. GSFC2020 stops on purpose with "instant". The "instant"
+    branch of Li2015 sets beta1a and beta2a, but it reads beta1 and beta2.
+    '''
+    return ['mean'] if law in ('GSFC2020', 'Li2015') else ['mean', 'instant']
+
+
+def _laws_except(left_out):
+    '''LAWS_WITH_A_RATE without the laws in the dict left_out, which gives the cause for each.'''
+    return [law for law in LAWS_WITH_A_RATE if law not in left_out]
+
+
+@pytest.mark.unit
+def test_the_law_lists_have_each_law_in_physics_py():
+    '''
+    A new law in physics.py makes this test fail until a list includes it. A law
+    that the validator accepts must have the property tests.
+    '''
+    methods = {name for name, _ in inspect.getmembers(FirnPhysics, inspect.isfunction)}
+    laws = set(LAWS_WITH_A_RATE) | set(LAWS_WITH_NO_RATE) | set(LAWS_THAT_CANNOT_BE_SELECTED)
+    assert methods - FIRNPHYSICS_METHODS_THAT_ARE_NOT_LAWS == laws
+    assert ALLOWED_VALUES['physRho'] <= set(LAWS_WITH_A_RATE)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('law', LAWS_WITH_A_RATE)
+def test_each_law_gives_a_rate_for_each_node(law):
+    assert _law_rate(law).shape == SMOOTH_COLUMN.shape
+
+
+def _conditions_with_a_rate_that_is_not_negative(law):
+    if law not in NEGATIVE_RATES:
+        return PROPERTY_CONDITIONS
+    is_negative, _cause = NEGATIVE_RATES[law]
+    return [condition for condition in PROPERTY_CONDITIONS if not is_negative(*condition)]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('law', LAWS_WITH_A_RATE)
+def test_rate_is_not_negative(law):
+    for T_mean, b_ice in _conditions_with_a_rate_that_is_not_negative(law):
+        for bdot_type in _accumulation_inputs_with_a_rate(law):
+            rate = _law_rate(law, T=T_mean, bdot_type=bdot_type, T_mean=T_mean, b_ice=b_ice)
+            assert np.all(rate >= 0.0), (f'{bdot_type}, Tm = {T_mean} K, b = {b_ice} m ice eq. a-1, '
+                                         f'rho = {SMOOTH_COLUMN[~(rate >= 0.0)]}')
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('law', LAWS_WITH_A_RATE)
+def test_rate_is_finite_for_each_density(law):
+    for T_mean, b_ice in PROPERTY_CONDITIONS:
+        for bdot_type in _accumulation_inputs_with_a_rate(law):
+            rate = _law_rate(law, T=T_mean, bdot_type=bdot_type, T_mean=T_mean, b_ice=b_ice)
+            assert np.all(np.isfinite(rate)), f'{bdot_type}, Tm = {T_mean} K, b = {b_ice} m ice eq. a-1'
+
+
+def _layered_column(kind):
+    '''
+    Melt makes a column that is not monotonic. "thin_layers" has only layers of
+    +30 and -30 kg m-3. "lenses" adds dense firn near the surface and ice lenses.
+    "crust" also adds a refrozen node at the surface.
+    '''
+    n = 600
+    rho = np.linspace(320.0, 880.0, n) + 30.0 * np.where(np.arange(n) % 2 == 0, 1.0, -1.0)
+    if kind in ('lenses', 'crust'):
+        rho[20] = 545.0  # dense firn, still in zone 1
+        rho[[60, 61, 150, 300]] = 900.0  # ice lenses
+    if kind == 'crust':
+        rho[0] = 850.0
+    return rho
+
+
+# The columns that a law does not accept, with the cause. The test leaves them out.
+GOUJON_ZONES = 'the zones are found from the first node above the transition density'
+MORRIS_LAYER = 'the factor 1 - 3.3 m is negative for a node far above the fitted density'
+LAYERED_COLUMNS_LEFT_OUT = {
+    **{(law, kind): GOUJON_ZONES for law in ['Breant2017', 'Goujon2003'] for kind in ['thin_layers', 'lenses', 'crust']},
+    ('HLSigfus', 'crust'): 'with a zone 2 node at the surface, the stress at 550 kg m-3 reads the bottom node',
+    ('Morris2014', 'lenses'): MORRIS_LAYER,
+    ('Morris2014', 'crust'): MORRIS_LAYER,
+}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('law, kind', [
+    (law, kind) for law in LAWS_WITH_A_RATE for kind in ('thin_layers', 'lenses', 'crust')
+    if (law, kind) not in LAYERED_COLUMNS_LEFT_OUT])
+def test_rate_is_finite_and_not_negative_in_a_layered_column(law, kind):
+    rho = _layered_column(kind)
+    rate = _law_rate(law, rho=rho, T=253.15, T_mean=253.15)
+    assert np.all(np.isfinite(rate))
+    assert np.all(rate >= 0.0), f'rho = {rho[rate < 0.0]}'
+
+
+INFINITE_AT_THE_MELTING_POINT = dict.fromkeys(
+    ['Helsen2008', 'Li2004', 'Li2011', 'Li2015'], 'the factor (273.15 - T)^-2.061 is infinite at the melting point')
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('law', _laws_except(INFINITE_AT_THE_MELTING_POINT))
+def test_rate_is_finite_at_the_melting_point(law):
+    assert np.all(np.isfinite(_law_rate(law, T=273.15, T_mean=253.15)))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('law', _laws_except(
+    {'Yamazaki1993': 'a snow law: the model uses it only for rho below 300 kg m-3'}))
+def test_rate_goes_to_zero_at_the_ice_density(law):
+    for bdot_type in _accumulation_inputs_with_a_rate(law):
+        rate = _law_rate(law, bdot_type=bdot_type)
+        near_ice = rate[-6:-1]  # 907, 912, 916, 916.9 and 916.99 kg m-3
+        assert np.all(np.diff(near_ice) < 0.0), bdot_type
+        assert rate[-1] <= 1.0e-3 * np.median(rate), bdot_type  # 917 kg m-3
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('law', LAWS_WITH_A_RATE)
+@pytest.mark.parametrize('T', [233.15, 253.15, 263.15])
+def test_rate_increases_with_temperature(law, T):
+    '''
+    A 5 K change of T alone, at the same rho, stress, accumulation and Tm. The
+    increase is at least that of the lowest activation energy of the laws. So a
+    law with a rate that is almost independent of T fails.
+    '''
+    warmer = T + 5.0
+    below_ice = SMOOTH_COLUMN < RHO_ICE
+    lowest = np.exp(LOWEST_ACTIVATION_ENERGY / R_GAS * (1.0 / T - 1.0 / warmer))
+    for bdot_type in _accumulation_inputs_with_a_rate(law):
+        ratio = (_law_rate(law, T=warmer, bdot_type=bdot_type)[below_ice]
+                 / _law_rate(law, T=T, bdot_type=bdot_type)[below_ice])
+        assert np.all(ratio >= lowest), f'{bdot_type}: lowest ratio {ratio.min()}, not {lowest}'
+
+
+NODE_AT_550_COLUMN = np.concatenate([np.arange(300.25, 550.0, 0.5), [550.0], np.arange(550.25, 900.0, 0.5)])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('law', _laws_except(
+    {'HLSigfus': 'the zone masks use rho < 550 and rho > 550, so they skip the node'}))
+def test_a_node_at_550_has_a_rate(law):
+    for bdot_type in _accumulation_inputs_with_a_rate(law):
+        rate = _law_rate(law, rho=NODE_AT_550_COLUMN, bdot_type=bdot_type)
+        assert rate[NODE_AT_550_COLUMN == 550.0] > 0.0, bdot_type
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('law, bdot_type', [
+    (law, bdot_type) for law in sorted(ALLOWED_VALUES['physRho']) for bdot_type in ('mean', 'instant')
+    if (law, bdot_type) != ('Li2015', 'instant')])  # see _accumulation_inputs_with_a_rate
+def test_each_bdot_type_gives_a_rate_or_stops_the_run(law, bdot_type):
+    '''
+    A law must densify each node below the ice density, or stop with a message. A
+    law can leave one zone at 0, and the other zone then looks correct. bdot_type
+    "stress" is not here, because docs/running/json.rst says that it is not
+    complete.
+    '''
+    try:
+        rate = _law_rate(law, bdot_type=bdot_type)
+    except SystemExit:  # GSFC2020 stops for "instant"
+        return
+    assert np.all(np.isfinite(rate))
+    no_rate = (rate == 0.0) & (SMOOTH_COLUMN < RHO_ICE)
+    assert not np.any(no_rate), f'{no_rate.sum()} nodes have a rate of 0, for rho from {SMOOTH_COLUMN[no_rate][0]}'
