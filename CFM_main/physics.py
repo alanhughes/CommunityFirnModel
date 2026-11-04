@@ -128,7 +128,7 @@ class FirnPhysics:
         # from 550 kg/m^3 > rho > 551 kg/m^3, where the classical HL_dynamic stage 2 model is applied.
         RHO_12      = 551.0
         z1mask      = (self.rho < RHO_1)
-        z12mask     = ((self.rho > RHO_1) & (self.rho <= RHO_12))  # Transition zone.
+        z12mask     = ((self.rho >= RHO_1) & (self.rho <= RHO_12))  # Transition zone.
         z2mask      = ((self.rho >= RHO_12) & (self.rho < RHO_I))  # Stage 2 - transition zone
         zImask      = (self.rho >= RHO_I)
 
