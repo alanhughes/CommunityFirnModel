@@ -18,7 +18,8 @@ properties, which do not need a reference equation:
   or stop the run on purpose.
 
 Where a law breaks a property, the test leaves out that law or that condition.
-This file lists each one, with the cause in the code.
+This file lists each one, with the cause in the code. Most of them have a strict
+xfail in the section "Known limits of the laws".
 
 The reference values are calculated in this file from the published equations,
 with literal constants. They do not use constants.py.
@@ -655,3 +656,65 @@ def test_rate_at_zero_instant_accumulation_is_the_limit_of_the_rate(law):
     near_zero = _law_rate(law, bdot_type='instant', bdot_instant=1.0e-9)[below_ice]
     assert np.all(near_zero <= 1.0e-3 * typical)
     assert np.all(_law_rate(law, bdot_type='instant', bdot_instant=0.0) == 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Known limits of the laws
+#
+# Each case is a law or a condition that the property tests above leave out. A fix
+# depends on the intended physics or on the range of the law. Each test is a strict
+# xfail, so it reports when a fix makes it pass.
+
+
+def _known_break(reason, raises=AssertionError):
+    return pytest.mark.xfail(strict=True, raises=raises, reason=reason)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('law', [
+    pytest.param(law, marks=_known_break(cause)) for law, (_is_negative, cause) in NEGATIVE_RATES.items()])
+def test_rate_is_not_negative_in_the_conditions_left_out(law):
+    is_negative, _cause = NEGATIVE_RATES[law]
+    for T_mean, b_ice in PROPERTY_CONDITIONS:
+        if is_negative(T_mean, b_ice):
+            rate = _law_rate(law, T=T_mean, T_mean=T_mean, b_ice=b_ice)
+            assert np.all(rate >= 0.0), f'Tm = {T_mean} K, b = {b_ice} m ice eq. a-1'
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('law, kind', [
+    pytest.param(law, kind, marks=_known_break(cause, raises=(AssertionError, SystemExit)))
+    for (law, kind), cause in LAYERED_COLUMNS_LEFT_OUT.items()])
+def test_rate_is_finite_and_not_negative_in_the_layered_columns_left_out(law, kind):
+    test_rate_is_finite_and_not_negative_in_a_layered_column(law, kind)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('law', [
+    pytest.param(law, marks=_known_break(cause)) for law, cause in INFINITE_AT_THE_MELTING_POINT.items()])
+def test_rate_is_finite_at_the_melting_point_for_the_laws_left_out(law):
+    test_rate_is_finite_at_the_melting_point(law)
+
+
+@pytest.mark.unit
+@pytest.mark.xfail(strict=True, raises=SystemExit,
+                   reason='the first zone 2 node has D above 0.6, where the zone 1 equation is negative')
+def test_Goujon2003_gives_a_rate_with_no_node_just_below_D_0_6():
+    '''
+    Above Tm = 247.8 K, the transition node must have 0.599 <= D < 0.6, a range of
+    1 kg m-3. If no node is in this range, the law stops the run with "Goujon is
+    not converging".
+    '''
+    rho = np.arange(300.0, 900.0, 5.0)
+    rate = _law_rate('Goujon2003', rho=rho, T=253.15, T_mean=253.15)
+    assert np.all(rate > 0.0)
+
+
+@pytest.mark.conservation
+@pytest.mark.xfail(strict=True, raises=AttributeError,
+                   reason='FirnDensitySpin and FirnDensityNoSpin give the Goujon inputs only to Goujon2003')
+def test_Breant2017_completes_a_short_model_run(short_config):
+    '''config_validation.py accepts Breant2017. The law reads ind1_old at the second step.'''
+    run = short_config(years=2, physRho='Breant2017')
+    run.run()
+    assert run.results_path.exists()
