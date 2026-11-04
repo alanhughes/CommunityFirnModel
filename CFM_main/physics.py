@@ -327,8 +327,8 @@ class FirnPhysics:
             beta1a = -1.218 - 0.403 * TmC
             beta2a = beta1a * (0.792 - 1.080 * np.mean(A_mean) + 0.00465 * TmC)
 
-            dr_dt[self.rho <= RHO_1] = (RHO_I - self.rho[self.rho <= RHO_1]) * A_instant * beta1 * 8.36 * (K_TO_C - self.Tz[self.rho <= RHO_1]) ** -2.061
-            dr_dt[self.rho > RHO_1]  = (RHO_I - self.rho[self.rho > RHO_1]) * A_instant * beta2 * 8.36 * (K_TO_C - self.Tz[self.rho > RHO_1]) ** -2.061
+            dr_dt[self.rho <= RHO_1] = (RHO_I - self.rho[self.rho <= RHO_1]) * A_instant * beta1a * 8.36 * (K_TO_C - self.Tz[self.rho <= RHO_1]) ** -2.061
+            dr_dt[self.rho > RHO_1]  = (RHO_I - self.rho[self.rho > RHO_1]) * A_instant * beta2a * 8.36 * (K_TO_C - self.Tz[self.rho > RHO_1]) ** -2.061
         
         elif self.bdot_type == 'mean':
 
