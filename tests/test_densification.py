@@ -58,7 +58,7 @@ import inspect
 import numpy as np
 import pytest
 
-from config_validation import ALLOWED_VALUES
+from config_validation import ALLOWED_VALUES, REQUIRED_KEYS, ConfigValidationError, validate_config
 from physics import FirnPhysics
 
 R_GAS = 8.314  # J mol-1 K-1
@@ -653,3 +653,61 @@ def test_rate_at_zero_instant_accumulation_is_the_limit_of_the_rate(law):
     near_zero = _law_rate(law, bdot_type='instant', bdot_instant=1.0e-9)[below_ice]
     assert np.all(near_zero <= 1.0e-3 * typical)
     assert np.all(_law_rate(law, bdot_type='instant', bdot_instant=0.0) == 0.0)
+
+
+# ---------------------------------------------------------------------------
+# bdot_type "stress"
+
+STRESS_HAS_NO_RATE = 'the law has no "stress" branch, so the rate stays 0 at the nodes that the branch sets'
+STRESS_HAS_NO_VARIABLE = 'the law has no "stress" branch, so it reads a variable that it did not set'
+STRESS_BREAKS = {
+    **dict.fromkeys(['Arthern2010S', 'Barnola1991', 'Brils2022', 'GSFC2020', 'HLSigfus', 'HLdynamic', 'Li2011',
+                     'Li2015', 'Morris2014', 'Simonsen2013', 'Veldhuijsen2023'], (STRESS_HAS_NO_RATE, AssertionError)),
+    **dict.fromkeys(['Helsen2008', 'Li2004'], (STRESS_HAS_NO_VARIABLE, NameError)),
+}
+
+
+def _validator_accepts_stress(law):
+    config = dict.fromkeys(REQUIRED_KEYS, False)
+    config.update(physRho=law, bdot_type='stress', spinup_climate_type='mean', outputs=[])
+    try:
+        validate_config(config)
+    except ConfigValidationError:
+        return False
+    return True
+
+
+def _stress_cases():
+    cases = []
+    for law in sorted(ALLOWED_VALUES['physRho']):
+        if law in STRESS_BREAKS:
+            reason, raises = STRESS_BREAKS[law]
+            cases.append(pytest.param(law, marks=pytest.mark.xfail(strict=True, raises=raises, reason=reason)))
+        else:
+            cases.append(law)
+    return cases
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('law', _stress_cases())
+def test_stress_gives_a_rate_or_stops_the_run(law):
+    '''
+    A config that passes the validator must densify each node below the ice
+    density, or stop with a message. A rate of 0 with no message hides the problem
+    from the user, and a law can leave one zone at 0 while the other zone looks
+    correct. A NameError is an accident of the code, not a message, so this test
+    does not accept it. The test asks the validator first, so a fix in the
+    validator or in a law makes the strict xfail report.
+
+    Laws that do not read bdot_type (for example Crocus) give the same rate as for
+    "mean".
+    '''
+    if not _validator_accepts_stress(law):
+        return
+    try:
+        rate = _law_rate(law, bdot_type='stress')
+    except (SystemExit, ValueError, NotImplementedError):
+        return
+    assert np.all(np.isfinite(rate))
+    no_rate = (rate == 0.0) & (SMOOTH_COLUMN < RHO_ICE)
+    assert not np.any(no_rate), f'{no_rate.sum()} nodes have a rate of 0, for rho from {SMOOTH_COLUMN[no_rate][0]}'
