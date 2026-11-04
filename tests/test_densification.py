@@ -589,12 +589,20 @@ NODE_AT_550_COLUMN = np.concatenate([np.arange(300.25, 550.0, 0.5), [550.0], np.
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize('law', _laws_except(
-    {'HLSigfus': 'the zone masks use rho < 550 and rho > 550, so they skip the node'}))
+@pytest.mark.parametrize('law', LAWS_WITH_A_RATE)
 def test_a_node_at_550_has_a_rate(law):
     for bdot_type in _accumulation_inputs_with_a_rate(law):
         rate = _law_rate(law, rho=NODE_AT_550_COLUMN, bdot_type=bdot_type)
         assert rate[NODE_AT_550_COLUMN == 550.0] > 0.0, bdot_type
+
+
+@pytest.mark.unit
+def test_HLSigfus_node_at_550_uses_the_transition_equation():
+    '''From 550 to 551 kg m-3, the law uses the zone 2 rate of Herron and Langway (1980).'''
+    T, b_ice = 253.15, 0.3
+    rate = _law_rate('HLSigfus', rho=NODE_AT_550_COLUMN, T=T, b_ice=b_ice)
+    at_550 = NODE_AT_550_COLUMN == 550.0
+    np.testing.assert_allclose(rate[at_550], _herron_langway(NODE_AT_550_COLUMN[at_550], T, b_ice), rtol=1e-12)
 
 
 @pytest.mark.unit
