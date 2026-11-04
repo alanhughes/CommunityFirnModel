@@ -55,7 +55,10 @@ table). For the models that use the accumulation rate, **bdot_type** selects whi
   accumulation rate predicts no densification when the accumulation rate is zero. In steady state the mean
   and the instantaneous rate are the same.
 * ``instant``: the accumulation rate of the current time step. Several models print a warning that this is
-  not recommended, and two do not work with it (see "Limitations" below).
+  not recommended, and one does not work with it (see "Limitations" below). In a time step with no accumulation,
+  ``Ligtenberg2011``, ``Simonsen2013``, ``KuipersMunneke2015``, ``Brils2022`` and ``Veldhuijsen2023`` give a rate of
+  0. The code does not calculate their multipliers in that time step, because these have
+  :math:`\ln\dot b` or :math:`\dot b^{-0.5}`. The rate of 0 is the limit of the equations as :math:`\dot b` goes to 0.
 * ``stress``: listed as an option of **bdot_type**, but still in progress (see :doc:`../running/json`).
 
 The accumulation rates in the input and in the configuration are always in m ice equivalent per year; each

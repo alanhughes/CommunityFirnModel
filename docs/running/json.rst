@@ -317,7 +317,7 @@ bdot_type
   The accumulation rate that the densification law (**physRho**) uses. Many empirical laws use the accumulation rate as a proxy for the load on the firn. In a steady state, the mass of firn above a node is the accumulation rate multiplied by the age of the node.
 
   - ``mean`` -- for each node, the mean accumulation rate since the node was at the surface. The CFM divides the mass of the firn from the surface to the node by the age of the node.
-  - ``instant`` -- the accumulation rate of the current time step. All nodes use the same value. It can change much from one time step to the next.
+  - ``instant`` -- the accumulation rate of the current time step. All nodes use the same value. It can change much from one time step to the next. In a time step with no accumulation, the accumulation terms of the laws give a rate of 0.
   - ``stress`` -- not complete. Do not use it. No law uses the stress through this option.
 
   Some laws calculate the rate from the stress, for example ``Crocus``. These laws do not read **bdot_type**.

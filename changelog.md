@@ -64,6 +64,7 @@ https://communityfirnmodel.readthedocs.io/en/latest/
 ### Bug fixes
 - *physics.py* **`Li2015` runs with `bdot_type` `instant`.** The `instant` branch set `beta1a` and `beta2a` but read `beta1` and `beta2`, so the model stopped with an `UnboundLocalError`. It now reads `beta1a` and `beta2a`. Results with `mean` do not change.
 - *physics.py* **`HLSigfus`: a node at exactly 550 kg m-3 has a rate.** No zone mask included this density, so the rate of the node was zero. The node now uses the transition equation. Results change only for a node at exactly this density.
+- *physics.py* **A rate of 0 at zero instant accumulation.** With `bdot_type` `instant` and no accumulation in a time step, `Ligtenberg2011`, `KuipersMunneke2015`, `Brils2022`, `Veldhuijsen2023` and `Simonsen2013` gave a NaN rate, from ln(0) or 1/sqrt(0) multiplied by 0. They now give 0, which is the limit of the equations. Results change only for those time steps.
 
 ## [4.1.0] 2026-11-03
 ### New
