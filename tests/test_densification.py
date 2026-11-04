@@ -454,10 +454,9 @@ def _law_rate(law, rho=SMOOTH_COLUMN, T=253.15, bdot_type='mean', b_ice=0.3, T_m
 def _accumulation_inputs_with_a_rate(law):
     '''
     The values of bdot_type that the property tests run. Each law has one branch of
-    code for each value. GSFC2020 stops on purpose with "instant". The "instant"
-    branch of Li2015 sets beta1a and beta2a, but it reads beta1 and beta2.
+    code for each value. GSFC2020 stops on purpose with "instant".
     '''
-    return ['mean'] if law in ('GSFC2020', 'Li2015') else ['mean', 'instant']
+    return ['mean'] if law == 'GSFC2020' else ['mean', 'instant']
 
 
 def _laws_except(left_out):
@@ -600,8 +599,7 @@ def test_a_node_at_550_has_a_rate(law):
 
 @pytest.mark.unit
 @pytest.mark.parametrize('law, bdot_type', [
-    (law, bdot_type) for law in sorted(ALLOWED_VALUES['physRho']) for bdot_type in ('mean', 'instant')
-    if (law, bdot_type) != ('Li2015', 'instant')])  # see _accumulation_inputs_with_a_rate
+    (law, bdot_type) for law in sorted(ALLOWED_VALUES['physRho']) for bdot_type in ('mean', 'instant')])
 def test_each_bdot_type_gives_a_rate_or_stops_the_run(law, bdot_type):
     '''
     A law must densify each node below the ice density, or stop with a message. A
@@ -616,3 +614,10 @@ def test_each_bdot_type_gives_a_rate_or_stops_the_run(law, bdot_type):
     assert np.all(np.isfinite(rate))
     no_rate = (rate == 0.0) & (SMOOTH_COLUMN < RHO_ICE)
     assert not np.any(no_rate), f'{no_rate.sum()} nodes have a rate of 0, for rho from {SMOOTH_COLUMN[no_rate][0]}'
+
+
+@pytest.mark.unit
+def test_Li2015_instant_agrees_with_mean_at_one_accumulation_rate():
+    '''beta1 and beta2 do not depend on bdot_type, so the same rate gives the same result.'''
+    np.testing.assert_allclose(_law_rate('Li2015', bdot_type='instant'), _law_rate('Li2015', bdot_type='mean'),
+                               rtol=1e-12)
