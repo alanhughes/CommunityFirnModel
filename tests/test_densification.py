@@ -433,11 +433,11 @@ NEGATIVE_RATES = {
 }
 
 
-def _law_rate(law, rho=SMOOTH_COLUMN, T=253.15, bdot_type='mean', b_ice=0.3, T_mean=250.0):
+def _law_rate(law, rho=SMOOTH_COLUMN, T=253.15, bdot_type='mean', b_ice=0.3, bdot_instant=None, T_mean=250.0):
     '''
     drho_dt [kg m-3 s-1] of any law in physics.py, for a column at the
-    accumulation rate b_ice [m ice eq. a-1]. The stress is the weight of the
-    column. The viscosity calculations of some laws divide by a rate of 0 at the
+    accumulation rate b_ice [m ice eq. a-1]. bdot_instant replaces b_ice for the
+    current time step. The stress is the weight of the column. The viscosity calculations of some laws divide by a rate of 0 at the
     ice density. The tests here do not read the viscosity, so they ignore this.
     '''
     rho = np.asarray(rho, dtype=float)
@@ -447,8 +447,9 @@ def _law_rate(law, rho=SMOOTH_COLUMN, T=253.15, bdot_type='mean', b_ice=0.3, T_m
         extra_inputs['QMorris'] = MORRIS_ACTIVATION_ENERGY
         extra_inputs['Hx'] = np.exp(-MORRIS_ACTIVATION_ENERGY / (R_GAS * T_mean)) * _node_age(rho.size)
     with np.errstate(divide='ignore', invalid='ignore'):
-        return _drho_dt(law, rho, T, bdot_type, bdot_instant=b_ice, bdot_mean=b_ice, T_mean=T_mean,
-                        dz=np.full(rho.size, NODE_THICKNESS), extra_inputs=extra_inputs)
+        return _drho_dt(law, rho, T, bdot_type, bdot_instant=b_ice if bdot_instant is None else bdot_instant,
+                        bdot_mean=b_ice, T_mean=T_mean, dz=np.full(rho.size, NODE_THICKNESS),
+                        extra_inputs=extra_inputs)
 
 
 def _accumulation_inputs_with_a_rate(law):
@@ -627,3 +628,28 @@ def test_Li2015_instant_agrees_with_mean_at_one_accumulation_rate():
     '''beta1 and beta2 do not depend on bdot_type, so the same rate gives the same result.'''
     np.testing.assert_allclose(_law_rate('Li2015', bdot_type='instant'), _law_rate('Li2015', bdot_type='mean'),
                                rtol=1e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('law', LAWS_WITH_A_RATE)
+def test_zero_instant_accumulation_gives_a_finite_rate(law):
+    '''With daily forcing, many time steps have no accumulation.'''
+    try:
+        rate = _law_rate(law, bdot_type='instant', bdot_instant=0.0)
+    except SystemExit:  # GSFC2020 stops for "instant"
+        return
+    assert np.all(np.isfinite(rate))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('law', ['Brils2022', 'KuipersMunneke2015', 'Ligtenberg2011', 'Simonsen2013', 'Veldhuijsen2023'])
+def test_rate_at_zero_instant_accumulation_is_the_limit_of_the_rate(law):
+    '''
+    These laws have ln(b) or 1/sqrt(b). The product with b still goes to 0 as b
+    goes to 0, so 0 is the rate at b = 0.
+    '''
+    below_ice = SMOOTH_COLUMN < RHO_ICE
+    typical = _law_rate(law, bdot_type='instant', bdot_instant=0.3)[below_ice]
+    near_zero = _law_rate(law, bdot_type='instant', bdot_instant=1.0e-9)[below_ice]
+    assert np.all(near_zero <= 1.0e-3 * typical)
+    assert np.all(_law_rate(law, bdot_type='instant', bdot_instant=0.0) == 0.0)
