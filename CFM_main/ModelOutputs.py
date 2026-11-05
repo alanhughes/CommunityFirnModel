@@ -111,11 +111,19 @@ class ModelOutputs:
         '''
         Function to regrid the variables that can not be linearly interpolated
         e.g. LWC and refrozen need to conserve mass. 
+
+        :param z: the top edge of each node
+        :param var: the amount in each node
+        :param grid: the top edge of each grid interval
+        :return: the amount in each grid interval. An amount is evenly spread over its node.
+        The last node is taken to be as thick as the node above it.
+        An amount below the end of the last grid interval is not included.
         '''
 
-        varC = np.cumsum(var)
-        newVar = np.interp(grid, z, varC)
-        return np.diff(newVar,append = newVar[-1])
+        node_edges = np.append(z, z[-1] + (z[-1] - z[-2]))
+        grid_edges = np.append(grid, grid[-1] + self.c['grid_output_res'])
+        amount_above = np.concatenate(([0], np.cumsum(var))) # the amount above each node edge
+        return np.diff(np.interp(grid_edges, node_edges, amount_above))
 
 
 

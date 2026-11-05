@@ -165,16 +165,56 @@ def test_output_lines_up_with_depth(short_config, monkeypatch):
     assert np.ptp(difference, axis=1).max() < 1.0
 
 
-@pytest.mark.unit
-def test_gridded_output_conserves_the_amount():
-    # An amount per node must not be interpolated between nodes.
+def _gridded(amount, varname='refrozen', z=np.arange(0.0, 10.0, 0.5), res=0.25):
+    '''Return the grid depths and the first and second output rows of one variable on the grid.'''
     from ModelOutputs import ModelOutputs
 
+    state = {'z': z, varname: amount}
+    outputs = ModelOutputs({'grid_outputs': True, 'grid_output_res': res, 'output_bits': 'float64'}, state, 1, 0.0, len(z))
+    outputs.updateMO(state, 1.0, 1)
+    rows = outputs.Mout_dict[varname]
+    return outputs.grid_out, rows[0, 1:], rows[1, 1:]
+
+
+def _one_node(node, n_nodes=20):
+    amount = np.zeros(n_nodes)
+    amount[node] = 0.3
+    return amount
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('varname', ['refrozen', 'LWC'])
+@pytest.mark.parametrize('node, depths', [(0, [0.0, 0.25]), (6, [3.0, 3.25]), (18, [9.0, 9.25])])
+def test_gridded_output_places_the_amount_in_its_node(varname, node, depths):
+    # Each node is 0.5 m thick and each grid interval is 0.25 m, so a node fills two
+    # intervals. The value at a grid depth is the amount from that depth to the next.
+    grid, first_row, later_row = _gridded(_one_node(node), varname)
+    assert grid[first_row > 0.0] == pytest.approx(depths)
+    assert first_row[first_row > 0.0] == pytest.approx([0.15, 0.15])
+    assert np.array_equal(later_row, first_row)
+
+
+@pytest.mark.unit
+def test_gridded_output_conserves_the_amount_with_a_coarse_grid():
+    # A grid interval holds parts of several nodes.
+    amount = np.arange(1.0, 21.0)
+    _, row, _ = _gridded(amount, res=0.8)
+    assert row[0] == pytest.approx(amount[0] + 0.6 * amount[1])
+    # The grid ends at 9.6 m. The last node starts at 9.5 m, so a fifth of it is on the grid.
+    assert row.sum() == pytest.approx(amount[:-1].sum() + 0.2 * amount[-1])
+
+
+@pytest.mark.unit
+def test_gridded_output_is_zero_below_the_column():
+    # The grid is fixed at the start of the run. The column can become shorter.
     z = np.arange(0.0, 10.0, 0.5)
-    amount = np.zeros_like(z)
-    amount[6] = 0.3  # one node refreezes
+    from ModelOutputs import ModelOutputs
+
     outputs = ModelOutputs({'grid_outputs': True, 'grid_output_res': 0.25, 'output_bits': 'float64'},
-                           {'z': z, 'refrozen': amount}, 1, 0.0, len(z))
-    outputs.updateMO({'z': z, 'refrozen': amount}, 1.0, 1)
-    assert outputs.Mout_dict['refrozen'][0, 1:].sum() == pytest.approx(0.3)
-    assert outputs.Mout_dict['refrozen'][1, 1:].sum() == pytest.approx(0.3)
+                           {'z': z, 'refrozen': np.zeros(20)}, 1, 0.0, 20)
+    short_z = np.arange(0.0, 5.0, 0.5)
+    amount = np.full(10, 0.1)
+    outputs.updateMO({'z': short_z, 'refrozen': amount}, 1.0, 1)
+    row = outputs.Mout_dict['refrozen'][1, 1:]
+    assert row.sum() == pytest.approx(1.0)
+    assert np.all(row[outputs.grid_out >= 5.0] == 0.0)
