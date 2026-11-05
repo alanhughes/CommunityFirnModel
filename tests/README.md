@@ -46,6 +46,6 @@ python tests/compare_commits.py <base of the PR> HEAD --start-year 1995    # the
 
 These two years have little water. Neither case has runoff, and the `darcy` case has no liquid water at the write times. So a change that affects only those results can pass.
 
-From 1995, the DYE-2 cases have runoff and liquid water at the write times. Use `--start-year 1995` for a change that affects these results. A later year takes longer, because `darcy` runs for each model year from 1980, and the spin-up repeats the window back in time.
+From 1995, the DYE-2 cases have runoff and liquid water at the write times. Use `--start-year 1995` for a change that affects these results. A later year takes longer, because at the default `bucket_until_year`, `darcy` runs for each model year from 1980, and the spin-up repeats the window back in time.
 
 No CI job runs this script, because a change that alters the results on purpose would fail it.

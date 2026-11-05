@@ -118,6 +118,8 @@ A conservation test runs the model (spin-up and ``time_evolve()``) for two years
      - The water budget for each of the four **liquid** schemes, with the DYE-2 forcing. Melt plus rain over the run agrees with refreezing plus runoff plus the liquid water in the column at the end.
    * - ``test_fixtures.py``
      - A short run with **melt_strict** true completes.
+   * - ``test_bucket_until_year.py``
+     - **darcy**, **prefsnowpack** and **resingledomain** run **bucket** before the year in **bucket_until_year** and their own scheme from that year. With ``null``, they run their own scheme from the first step. A step exactly on the year runs their own scheme. The file also has ``unit`` tests of the example configs, the validator, the default in the code, and the message at the start of a run, which build the model and do not run it.
 
 Fixtures for new tests
 ----------------------
@@ -165,7 +167,7 @@ The cases are a 2-year run with **liquid** set to ``darcy`` and to ``bucket``, w
 
 The script compares each dataset of ``CFMresults.hdf5`` exactly: the shape, the NaN positions and each value. There is no tolerance. It reports a pass, or the first dataset that differs, with the first index, both values and the number of values that differ. The exit code is 0 if the results are equal, 1 if a dataset differs, and 2 if a ref is not found or a run fails. The option ``--ignore <dataset>`` skips a dataset that the change alters on purpose.
 
-The years 1980 and 1981 have little water. Neither case has runoff, and the ``darcy`` case has no liquid water at the write times. So a change that affects only those results can pass. From 1995, both cases have runoff and liquid water at the write times, so use ``--start-year 1995`` for a change that affects these results. The check then takes about 4 minutes in place of about 20 seconds, because ``darcy`` runs for each model year from 1980, and the spin-up repeats the window back in time.
+The years 1980 and 1981 have little water. Neither case has runoff, and the ``darcy`` case has no liquid water at the write times. So a change that affects only those results can pass. From 1995, both cases have runoff and liquid water at the write times, so use ``--start-year 1995`` for a change that affects these results. The check then takes about 4 minutes in place of about 20 seconds, because at the default **bucket_until_year**, ``darcy`` runs for each model year from 1980, and the spin-up repeats the window back in time.
 
 No CI job runs this script, because a change that alters the results on purpose would fail it.
 

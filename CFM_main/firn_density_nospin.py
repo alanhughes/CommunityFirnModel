@@ -480,6 +480,16 @@ class FirnDensityNoSpin:
             # self.modeltime  = np.linspace(yr_start, yr_end, self.stp)
             # self.t          = 1.0 / self.c['stpsPerYear']                   # years per time step
         #####################
+
+        if self.c['MELT']:
+            ### darcy, prefsnowpack and resingledomain run bucket before this model year, to reduce the computational time of the spin-up. null means no switch.
+            bucket_until_year = self.c.get('bucket_until_year', 1980)
+            self.bucket_until_year = -np.inf if bucket_until_year is None else bucket_until_year
+            if (self.c['liquid'] in ['darcy', 'prefsnowpack', 'resingledomain']) and (self.modeltime[0] < self.bucket_until_year):
+                if self.modeltime[-1] < self.bucket_until_year:
+                    print(f"liquid is {self.c['liquid']}, but this run ends before bucket_until_year ({bucket_until_year}), so all steps use bucket.")
+                else:
+                    print(f"liquid is {self.c['liquid']}: this run uses bucket before model year {bucket_until_year} (bucket_until_year), then {self.c['liquid']}.")
       
         ###############################
         ### surface boundary conditions
@@ -1243,9 +1253,9 @@ class FirnDensityNoSpin:
                 elif self.c['liquid'] == 'darcy':
                     if (self.snowmeltSec[iii]>0) or (np.any(self.LWC > 0.)) or (self.rainSec[iii] > 0.): #i.e. there is water
                         ### Use Darcy scheme only after spin-up period to reduce computational time ###
-                        if self.modeltime[iii]<1980:
+                        if self.modeltime[iii]<self.bucket_until_year:
                             self.rho, self.age, self.dz, self.Tz, self.r2, self.z, self.mass, self.dzn, self.LWC, meltgridtrack, self.refreeze, self.runoff, self.dh_melt = bucket(self,iii)
-                        elif self.modeltime[iii]>=1980:
+                        elif self.modeltime[iii]>=self.bucket_until_year:
                             self.rho, self.age, self.dz, self.Tz, self.r2, self.z, self.mass, self.dzn, self.LWC, meltgridtrack, self.refreeze, self.runoff, self.dh_melt = darcyscheme(self,iii)
                         if self.doublegrid==True: # if we use doublegrid -> use the gridtrack corrected for melting
                             self.gridtrack = np.copy(meltgridtrack)
@@ -1257,8 +1267,8 @@ class FirnDensityNoSpin:
                 ### end darcy ##################               
 
                 elif self.c['liquid'] == 'prefsnowpack':
-                    #VV You can choose a date to switch from bucket to prefflow, this should be easy to use from the json file
-                    if self.modeltime[iii] >= 1980: # Apply dualperm from a certain date
+                    #VV The json key bucket_until_year sets the date of the switch from bucket to this scheme
+                    if self.modeltime[iii] >= self.bucket_until_year: # Apply dualperm from a certain date
                         if ((self.snowmeltSec[iii]>0.) or (np.any(self.LWC > 0.)) or (self.rainSec[iii] > 0.)): #i.e. there is water
                             self.rho, self.age, self.dz, self.Tz, self.z, self.mass, self.dzn, self.LWC, self.PLWC_mem, self.r2, self.refrozen, self.Trunoff, self.dh_melt = prefflow(self,iii)
                             self.refreeze = np.sum(self.refrozen) #[m w.e.]
@@ -1271,7 +1281,7 @@ class FirnDensityNoSpin:
                             self.dh_melt    = 0. # no melt
                             self.refreeze, self.runoff, self.meltvol, self.rainvol = 0.,0.,0.,0.
                             self.dzn        = self.dz[0:self.compboxes] # Not sure this is necessary
-                    elif self.modeltime[iii] < 1980: # Apply bVV until a certain date
+                    elif self.modeltime[iii] < self.bucket_until_year: # Apply bVV until a certain date
                         if (self.snowmeltSec[iii]>0) or (np.any(self.LWC > 0.) or (self.rainSec[iii] > 0.)): #i.e. there is water
                             self.rho, self.age, self.dz, self.Tz, self.r2, self.z, self.mass, self.dzn, self.LWC, meltgridtrack, self.refreeze, self.runoff, self.dh_melt = bucket(self,iii)
                             self.meltvol = self.snowmeltSec[iii]*S_PER_YEAR*0.917 #[m w.e.]
@@ -1286,8 +1296,8 @@ class FirnDensityNoSpin:
                 ### end prefsnowpack ##################
 
                 elif self.c['liquid'] == 'resingledomain':
-                    #VV You can choose a date to switch from bucket to prefflow, this should be easy to use from the json file
-                    if self.modeltime[iii] >= 1980: # Apply dualperm from a certain date
+                    #VV The json key bucket_until_year sets the date of the switch from bucket to this scheme
+                    if self.modeltime[iii] >= self.bucket_until_year: # Apply dualperm from a certain date
                         if ((self.snowmeltSec[iii]>0.) or (np.any(self.LWC > 0.)) or (self.rainSec[iii] > 0.)): #i.e. there is water
                             self.rho, self.age, self.dz, self.Tz, self.z, self.mass, self.dzn, self.LWC, self.PLWC_mem, self.r2, self.refrozen, self.Trunoff, self.dh_melt = resingledomain(self,iii)
                             self.refreeze = np.sum(self.refrozen) #[m w.e.]
@@ -1301,7 +1311,7 @@ class FirnDensityNoSpin:
                             self.dh_melt    = 0. # no melt
                             self.refreeze, self.runoff, self.meltvol, self.rainvol = 0.,0.,0.,0.
                             self.dzn        = self.dz[0:self.compboxes] # Not sure this is necessary
-                    elif self.modeltime[iii] < 1980: # Apply bVV until a certain date
+                    elif self.modeltime[iii] < self.bucket_until_year: # Apply bVV until a certain date
                         if (self.snowmeltSec[iii]>0) or (np.any(self.LWC > 0.) or (self.rainSec[iii] > 0.)): #i.e. there is water
                             self.rho, self.age, self.dz, self.Tz, self.r2, self.z, self.mass, self.dzn, self.LWC, meltgridtrack, self.refreeze, self.runoff, self.dh_melt = bucket(self,iii)
                             self.meltvol = self.snowmeltSec[iii]*S_PER_YEAR*0.917 #[m w.e.]
