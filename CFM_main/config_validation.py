@@ -202,8 +202,9 @@ def validate_config(c, config_path=None):
     :param config_path: optional path to the source .json, used only to make
         error/warning messages more informative.
 
-    Prints a warning for each unrecognized key, and when 'keep_firnthickness'
-    is true with a 'liquid' scheme that ignores it in its melt removal. Then raises
+    Prints a warning for each unrecognized key, and when 'MELT' and
+    'keep_firnthickness' are true with a 'liquid' scheme that ignores the key in
+    its melt removal. Then raises
     ConfigValidationError (once, listing every problem found) if any required
     key is missing, a conditional requirement is unmet, or an option value is
     invalid. Returns None when the configuration is valid.
@@ -256,7 +257,8 @@ def validate_config(c, config_path=None):
                 .format(key))
 
     # 6. A key that the selected scheme ignores -> warning only.
-    if c.get('keep_firnthickness') and c.get('liquid') in LIQUID_IGNORES_KEEP_FIRNTHICKNESS:
+    if (c.get('MELT') and c.get('keep_firnthickness')
+            and c.get('liquid') in LIQUID_IGNORES_KEEP_FIRNTHICKNESS):
         warnings.append(
             "'keep_firnthickness' is true, but the melt removal of the '{}' "
             "scheme ignores it: the new bottom nodes take the thickness of "

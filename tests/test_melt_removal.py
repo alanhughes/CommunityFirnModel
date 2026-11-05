@@ -64,7 +64,8 @@ def _warnings_for(capsys, **overrides):
 def test_warning_for_a_scheme_that_ignores_keep_firnthickness(capsys, liquid):
     warnings = _warnings_for(capsys, liquid=liquid, keep_firnthickness=True)
     assert len(warnings) == 1
-    assert f"'{liquid}'" in warnings[0]
+    assert f"the melt removal of the '{liquid}' scheme ignores it" in warnings[0]
+    assert "Sublimation and any step that uses 'bucket' still follow the key" in warnings[0]
 
 
 @pytest.mark.unit
@@ -73,8 +74,11 @@ def test_warning_for_a_scheme_that_ignores_keep_firnthickness(capsys, liquid):
     {'liquid': 'darcy', 'keep_firnthickness': False},
     {'liquid': 'resingledomain', 'keep_firnthickness': False},
     {'liquid': 'prefsnowpack', 'keep_firnthickness': False},
+    {'liquid': 'bucketVV', 'keep_firnthickness': True},
+    {'liquid': 'percolation_bucket', 'keep_firnthickness': True},
+    {'liquid': 'darcy', 'keep_firnthickness': True, 'MELT': False},
 ])
-def test_no_warning_if_the_scheme_follows_the_key_or_the_key_is_false(capsys, overrides):
+def test_no_warning_if_the_scheme_follows_the_key_or_the_key_has_no_effect(capsys, overrides):
     assert _warnings_for(capsys, **overrides) == []
 
 
