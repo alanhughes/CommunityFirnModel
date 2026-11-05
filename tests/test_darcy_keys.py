@@ -1,6 +1,6 @@
 '''
-The config keys of darcyscheme: each key reaches the scheme, and a config without
-the keys gives the result of the example configs.
+The config keys of darcyscheme: each key reaches the scheme, and the defaults in the
+scheme and in the example configs are the same.
 '''
 
 import json
@@ -74,21 +74,35 @@ def test_validator_knows_the_keys():
     assert set(DEFAULTS) <= KNOWN_KEYS
 
 
-@pytest.mark.scheme
-def test_config_without_the_keys_gives_the_same_result(synthetic_column):
-    with_keys, _ = _layered_column(synthetic_column)
-    without_keys, _ = _layered_column(synthetic_column)
-    for key in DEFAULTS:
-        del without_keys.c[key]
-    assert _run(with_keys) == _run(without_keys)
-    for name in ('LWC', 'rho', 'dz', 'Tz'):
-        np.testing.assert_array_equal(getattr(with_keys, name), getattr(without_keys, name))
+class _RecordedDefaults(dict):
+    '''A config that records the default of each get call.'''
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.defaults = {}
+
+    def get(self, key, default=None):
+        self.defaults[key] = default
+        return super().get(key, default)
 
 
 @pytest.mark.scheme
-def test_bucket_keys_do_not_reach_darcy(synthetic_column):
-    reference, _ = _layered_column(synthetic_column)
-    changed, _ = _layered_column(synthetic_column, RhoImp=500.0, ThickImp=0.0, Slope=0.5)
+def test_scheme_defaults_are_the_values_for_a_config_without_the_keys(synthetic_column):
+    # The example configs set the keys, so a run from them does not use these defaults.
+    column, _ = _layered_column(synthetic_column)
+    column.c = _RecordedDefaults({key: value for key, value in column.c.items() if key not in DEFAULTS})
+    _run(column)
+    assert {key: column.c.defaults[key] for key in DEFAULTS} == DEFAULTS
+
+
+@pytest.mark.scheme
+@pytest.mark.parametrize('lens_thickness, bucket_keys', [
+    (0.25, {'RhoImp': 890.0, 'ThickImp': 0.0}),  # a thin lens that leaks: these values change it
+    (1.0, {'Slope': 0.5}),  # a thick lens that seals: this value changes the lateral runoff
+])
+def test_bucket_keys_do_not_reach_darcy(synthetic_column, lens_thickness, bucket_keys):
+    reference, _ = _layered_column(synthetic_column, lens_thickness=lens_thickness)
+    changed, _ = _layered_column(synthetic_column, lens_thickness=lens_thickness, **bucket_keys)
     assert _run(reference) == _run(changed)
     np.testing.assert_array_equal(reference.LWC, changed.LWC)
 
@@ -184,6 +198,14 @@ def test_dtmin_limits_the_sub_step(synthetic_column, monkeypatch):
 
 
 @pytest.mark.scheme
+def test_dtmax_takes_priority_if_the_bounds_conflict(synthetic_column, monkeypatch):
+    lengths = _sub_step_lengths(monkeypatch)
+    column, _ = _layered_column(synthetic_column, darcy_dtmin=1800, darcy_dtmax=600)
+    _run(column)
+    assert all(length == 600 for length in lengths[1:-1])
+
+
+@pytest.mark.scheme
 def test_theta_s_factor_limits_the_water_in_a_node(synthetic_column):
     # More rain than the firn above the lens can hold, so these nodes fill.
     # Rain removes no firn, and no water leaves the nodes by lateral runoff.
@@ -198,6 +220,17 @@ def test_theta_s_factor_limits_the_water_in_a_node(synthetic_column):
     assert theta == pytest.approx(0.5 * porosity, rel=0.01)
     theta, porosity = fullest_node(0.917)
     assert theta == pytest.approx(0.917 * porosity, rel=0.01)
+
+
+@pytest.mark.scheme
+def test_theta_s_factor_does_not_change_the_refreeze_limit(synthetic_column):
+    # One sub-step on very cold firn: the volume, not the cold content, limits refreeze.
+    # So water refreezes up to 0.917 of the porosity, which gives the density of ice.
+    # A factor of 1.2 lets a node hold more water, but the density does not go above ice.
+    column = synthetic_column(n=40, rho_profile=800.0, T_profile=200.0, dz=0.125, r2=(5e-4) ** 2,
+                              rain=0.1, dt=60.0, config={'darcy_theta_s_factor': 1.2})
+    melt.darcyscheme(column, 0)
+    assert np.max(column.rho) == pytest.approx(917.0, abs=0.01)
 
 
 @pytest.mark.scheme

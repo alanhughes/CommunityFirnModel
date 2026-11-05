@@ -628,7 +628,7 @@ def bucket(self,iii):
 def darcyscheme(self,iii):
     '''
     Threshold thickness for ice lenses to be impermeable
-    Approach: modify density for calculation of Darcy variables (upper threshold set to 910)
+    Approach: modify density for calculation of Darcy variables (upper threshold set by darcy_rho_cap)
     Liquid water input is distributed in upper nodes rather than using a flux
     boundary condition at the surface node (causes high runoff)
     Input is accomodated until impermeable node reached: remaining input runs off
@@ -747,7 +747,7 @@ def darcyscheme(self,iii):
             imptop = np.array([]) #prepare vector of nodes at the top of the impermeable ice lenses
             for ii in range(len(lens0)):
                 lensdz = (sum(self.dz[lens0[ii]:lens1[ii]+1])) #thickness of the ice lens
-                if lensdz>ThickImp or (ii==len(lens0)-1): #impermeability if ThickImp reached (bottom of domain is always impermeable)
+                if lensdz>ThickImp or (ii==len(lens0)-1): #impermeability if thicker than ThickImp (bottom of domain is always impermeable)
                     imp = np.append(imp,np.arange(lens0[ii],lens1[ii]+1,1)).astype(int) #impermeable nodes
                     imptop = np.append(imptop,lens0[ii]).astype(int) #surface node of the impermeable ice lens
             
