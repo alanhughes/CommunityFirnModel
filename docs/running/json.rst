@@ -744,7 +744,7 @@ Slope
 
 darcy_RhoImp
 ------------
-  Density at or above which the ``darcyscheme`` function treats a layer as an ice lens. The **darcy** option runs the **bucket** scheme before model year 1980, so all **darcy_** keys apply only from 1980. In the earlier years, the **bucket** keys apply. This value must not be above **darcy_rho_cap**, or the run stops.
+  Density at or above which the ``darcyscheme`` function treats a layer as an ice lens. The **darcy** option runs the **bucket** scheme before the model year in **bucket_until_year**, so all **darcy_** keys apply only from that year. In the earlier years, the **bucket** keys apply. This value must not be above **darcy_rho_cap**, or the run stops.
 
   :type: ``float``
   :default: ``873.0``
@@ -801,6 +801,16 @@ darcy_theta_irreducible
 
   :type: ``float``
   :default: ``0.02``
+
+bucket_until_year
+-----------------
+  The **darcy**, **prefsnowpack** and **resingledomain** options run the **bucket** scheme for all model steps before this year, and the selected scheme from this year. The reason is cost: the spin-up part of a transient run would otherwise run the slow scheme. The value is a calendar year, so choose it for the period of your forcing. The default suits a forcing that starts in 1980, with a spin-up that comes before it.
+
+  With ``null``, the selected scheme runs from the first step. A run with a start before this year prints one message at the start. This key has no effect on the **bucket** option.
+
+  :type: ``float`` or ``null``
+  :default: ``1980``
+  :units: :math:`\textrm{yr}`
 
 melt_strict
 -----------

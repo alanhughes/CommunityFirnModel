@@ -6,7 +6,7 @@ The **bucket** and **darcy** meltwater schemes (``bucket`` and ``darcyscheme`` i
 - A **budget** check. The water at the start of the call (liquid water in the column, plus melt, plus rain) must agree with the water at the end (liquid water, plus refreezing, plus runoff).
 - A **cold-layer** check. No layer below 0 °C can hold liquid water.
 
-The **prefsnowpack** and **resingledomain** schemes do not do these checks. Before model year 1980, the **darcy**, **prefsnowpack** and **resingledomain** options use the **bucket** scheme, which does the checks.
+The **prefsnowpack** and **resingledomain** schemes do not do these checks. Before the model year in **bucket_until_year**, the **darcy**, **prefsnowpack** and **resingledomain** options use the **bucket** scheme, which does the checks.
 
 The checks
 ==========

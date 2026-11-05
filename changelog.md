@@ -64,6 +64,7 @@ https://communityfirnmodel.readthedocs.io/en/latest/
 ### New
 - *melt.py, config_validation.py, example .json files, run_CFM_example_notebook.ipynb* Added config keys for the parameters of the darcy scheme: "darcy_RhoImp", "darcy_ThickImp", "darcy_lateral_runoff", "darcy_slope", "darcy_rho_cap", "darcy_dtmin", "darcy_dtmax", "darcy_theta_s_factor" and "darcy_theta_irreducible". Each default is the earlier hard-coded value, so existing configurations give the same results. The darcy scheme does not read "RhoImp", "ThickImp" or "Slope", so a comparison with the bucket scheme must set both sets of keys.
 - *config_validation.py* The validator prints a warning when "MELT" and "keep_firnthickness" are true and "liquid" is "darcy", "resingledomain" or "prefsnowpack". The melt removal of these schemes ignores the key.
+- *firn_density_nospin.py, config_validation.py, example .json files, run_CFM_example_notebook.ipynb* Added the config key "bucket_until_year" (default 1980; null means no switch). It sets the model year at which the darcy, prefsnowpack and resingledomain options stop using the bucket scheme, in place of a fixed 1980. A run that uses bucket because of this key prints one message at the start.
 
 ### Fixed
 - *melt.py* The darcy scheme stopped with an IndexError when the liquid water input in a sub-step was more than the remaining capacity of the column, for example on an impermeable column or on saturated firn over ice. The excess now runs off.
