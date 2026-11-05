@@ -145,6 +145,9 @@ KNOWN_KEYS = {
     'liquid', 'merging', 'merge_min', 'LWCcorrect', 'ColeouLesaffre',
     'IrrVal', 'RhoImp', 'ThickImp', 'DownToIce', 'Ponding', 'DirectRunoff',
     'RunoffZuoOerlemans', 'Slope', 'melt_strict', 'keep_firnthickness', 'meltwater_solver', 'meltwater_solver_options',
+    'darcy_RhoImp', 'darcy_ThickImp', 'darcy_lateral_runoff', 'darcy_slope',
+    'darcy_rho_cap', 'darcy_dtmin', 'darcy_dtmax', 'darcy_theta_s_factor',
+    'darcy_theta_irreducible',
     # SEB
     'SEB', 'SEB_TL_thick', 'albedo_factor',
     # stage zero snow

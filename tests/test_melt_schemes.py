@@ -88,3 +88,27 @@ def test_darcy_uses_bisection_when_the_first_guess_is_far_from_equilibrium(darcy
     for call in calls:
         expected = 'flux_bisection' if abs(call['f_eq']) > 1.0 else 'flux_newtonraphson'
         assert call['solver'] == expected, call
+
+
+@pytest.mark.scheme
+def test_darcy_input_on_an_impermeable_column_runs_off(synthetic_column):
+    # No node can store water, so all the input runs off.
+    column = synthetic_column(n=40, rho_profile=900.0, T_profile=273.15, dz=0.125, r2=(5e-4) ** 2,
+                              rain=0.03, dt=86400.0, config={'melt_strict': True})
+    runoff = melt.darcyscheme(column, 0)[11]
+    assert runoff == pytest.approx(0.03 * RHO_I / 1000.0, rel=1e-12)
+    assert np.sum(column.LWC) == 0.0
+
+
+@pytest.mark.scheme
+@pytest.mark.parametrize('config', [{}, {'darcy_lateral_runoff': False}, {'darcy_slope': 0.0}])
+def test_darcy_input_above_the_capacity_of_the_column_runs_off(synthetic_column, config):
+    # Firn on ice, with more rain than the pore space can hold and with little or no
+    # lateral drainage. The water budget check stops the run if water is lost.
+    column = synthetic_column(n=40, rho_profile=lambda z: np.where(z < 2.0, 400.0, 900.0),
+                              T_profile=273.15, dz=0.125, r2=(5e-4) ** 2, rain=2.0, dt=86400.0,
+                              config={'melt_strict': True, **config})
+    runoff = melt.darcyscheme(column, 0)[11]
+    assert runoff > 0.0
+    pore_space = (917.0 - column.rho) / 917.0 * 0.917 * column.dz
+    assert np.all(column.LWC <= pore_space)

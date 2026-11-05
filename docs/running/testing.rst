@@ -93,9 +93,11 @@ A scheme test calls one meltwater scheme once, on a synthetic column (see `Fixtu
    * - File
      - Contents
    * - ``test_melt_schemes.py``
-     - ``bucket`` and ``darcyscheme``: the melted thickness ``dh_melt`` agrees with the melt mass divided by the density. ``darcyscheme`` gives the two interface nodes to the flux solvers, keeps each flux within the available water and pore space, and uses bisection when the first guess is far from equilibrium.
+     - ``bucket`` and ``darcyscheme``: the melted thickness ``dh_melt`` agrees with the melt mass divided by the density. ``darcyscheme`` gives the two interface nodes to the flux solvers, keeps each flux within the available water and pore space, and uses bisection when the first guess is far from equilibrium. Input above the capacity of the column runs off.
    * - ``test_fixtures.py``
      - ``bucket`` closes its water budget on a synthetic column and passes all its checks in strict mode. ``darcyscheme`` runs on a synthetic column and passes its checks.
+   * - ``test_darcy_keys.py``
+     - Each **darcy_** key reaches ``darcyscheme``. The defaults in the scheme and in the example configs are the same. The **bucket** keys do not reach the scheme.
 
 Conservation tests (``conservation``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

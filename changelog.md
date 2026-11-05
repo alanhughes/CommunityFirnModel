@@ -60,6 +60,13 @@ https://communityfirnmodel.readthedocs.io/en/latest/
 	- I am working on adding turbulent flux calculations to the SEB module
 
 
+## [Unreleased]
+### New
+- *melt.py, config_validation.py, example .json files, run_CFM_example_notebook.ipynb* Added config keys for the parameters of the darcy scheme: "darcy_RhoImp", "darcy_ThickImp", "darcy_lateral_runoff", "darcy_slope", "darcy_rho_cap", "darcy_dtmin", "darcy_dtmax", "darcy_theta_s_factor" and "darcy_theta_irreducible". Each default is the earlier hard-coded value, so existing configurations give the same results. The darcy scheme does not read "RhoImp", "ThickImp" or "Slope", so a comparison with the bucket scheme must set both sets of keys.
+
+### Fixed
+- *melt.py* The darcy scheme stopped with an IndexError when the liquid water input in a sub-step was more than the remaining capacity of the column, for example on an impermeable column or on saturated firn over ice. The excess now runs off.
+
 ## [3.2.0] 2026-08-25
 ### Notes
 - This release focuses on ease of use (examples, documentation, config validation) and on the meltwater-refreezing solver, which now offers several interchangeable schemes.

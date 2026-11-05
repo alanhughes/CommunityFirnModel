@@ -628,11 +628,18 @@ def bucket(self,iii):
 def darcyscheme(self,iii):
     '''
     Threshold thickness for ice lenses to be impermeable
-    Approach: modify density for calculation of Darcy variables (upper threshold set to 910)
+    Approach: modify density for calculation of Darcy variables (upper threshold set by darcy_rho_cap)
     Liquid water input is distributed in upper nodes rather than using a flux
     boundary condition at the surface node (causes high runoff)
     Input is accomodated until impermeable node reached: remaining input runs off
     Melting and refreezing occur at each Darcy step
+
+    Config keys, each with a default if the key is absent:
+    darcy_RhoImp, darcy_ThickImp, darcy_lateral_runoff, darcy_slope, darcy_rho_cap,
+    darcy_dtmin, darcy_dtmax, darcy_theta_s_factor, darcy_theta_irreducible.
+    The scheme does not read the bucket keys RhoImp, ThickImp and Slope.
+    The first Darcy step is always 60 s. darcy_dtmin and darcy_dtmax apply from the second step.
+    A lens seals if it is thicker than darcy_ThickImp (bucket: at least as thick as ThickImp).
     '''
 
     ticdarcy = time.time()
@@ -640,14 +647,16 @@ def darcyscheme(self,iii):
     timetot  = self.dt[iii] #total duration to be covered by the Darcy routine
     dtsub    = 60 # [s] duration of Darcy time steps, adjusted iteratively
     ### User choices ###
-    dtmin    = 60 # [s] minimal time step for the Darcy routine
-    dtmax    = 3600 # [s] maximal time step for the Darcy routine
+    dtmin    = self.c.get('darcy_dtmin', 60) # [s] minimal time step for the Darcy routine
+    dtmax    = self.c.get('darcy_dtmax', 3600) # [s] maximal time step for the Darcy routine
     dtsub    = 60. #starting time step used in the Darcy scheme (default value: 60 sec)
-    RhoImp     = 873. #density from which a firn layer is considered impermeable to incoming flux
-    ThickImp   = 0.5 #minimum thickness of ice lens to be considered impermeable [m]
-    lat_runoff = True #to compute lateral runoff above impermeable ice layers
-    slope_proxy = 0.02 #proxy for the slope (used to compute the lateral runoff fluxes) [dimensionless]
-    rholim_dcy  = 910. #max density used in Darcy calculations to allow for some permeability of ice lenses [kg m-3]
+    RhoImp     = self.c.get('darcy_RhoImp', 873.) #density from which a firn layer is considered impermeable to incoming flux
+    ThickImp   = self.c.get('darcy_ThickImp', 0.5) #minimum thickness of ice lens to be considered impermeable [m]
+    lat_runoff = self.c.get('darcy_lateral_runoff', True) #to compute lateral runoff above impermeable ice layers
+    slope_proxy = self.c.get('darcy_slope', 0.02) #proxy for the slope (used to compute the lateral runoff fluxes) [dimensionless]
+    rholim_dcy  = self.c.get('darcy_rho_cap', 910.) #max density used in Darcy calculations to allow for some permeability of ice lenses [kg m-3]
+    theta_s_factor = self.c.get('darcy_theta_s_factor', 0.917) #fraction of the porosity that water can fill at saturation
+    theta_irreducible = self.c.get('darcy_theta_irreducible', 0.02) #irreducible volumetric water content
     
     ### Surface fluxes ###
     melt_mass_tot = self.snowmeltSec[iii]*S_PER_YEAR*917 #total melt over the Darcy routine [kg]
@@ -684,7 +693,7 @@ def darcyscheme(self,iii):
     #     print('Bottom domain does not reach impermable density in Darcy scheme, exiting')
     #     sys.exit()
     if RhoImp>rholim_dcy:
-        print('RhoImp must be below rholim_dcy in Darcy scheme, exiting')
+        print('darcy_RhoImp must not be above darcy_rho_cap in Darcy scheme, exiting')
         sys.exit()
     while timer<timetot:
         ### Melt upper nodes ###
@@ -738,7 +747,7 @@ def darcyscheme(self,iii):
             imptop = np.array([]) #prepare vector of nodes at the top of the impermeable ice lenses
             for ii in range(len(lens0)):
                 lensdz = (sum(self.dz[lens0[ii]:lens1[ii]+1])) #thickness of the ice lens
-                if lensdz>ThickImp or (ii==len(lens0)-1): #impermeability if ThickImp reached (bottom of domain is always impermeable)
+                if lensdz>ThickImp or (ii==len(lens0)-1): #impermeability if thicker than ThickImp (bottom of domain is always impermeable)
                     imp = np.append(imp,np.arange(lens0[ii],lens1[ii]+1,1)).astype(int) #impermeable nodes
                     imptop = np.append(imptop,lens0[ii]).astype(int) #surface node of the impermeable ice lens
             
@@ -754,9 +763,9 @@ def darcyscheme(self,iii):
         rhomod  = np.where(self.rho!=rhodcy)[0] #all nodes of which density is modified
         phidcy  = (917-rhodcy)/917 #porosity with modified rhodcy
         theta_w   = self.LWC/self.dz #volumetric water content
-        theta_s   = phidcy*0.917 #theta at saturation, Yamaguchi 2010 obs of 10% pore space filled with air
+        theta_s   = phidcy*theta_s_factor #theta at saturation, Yamaguchi 2010 obs of 10% pore space filled with air
         theta_s   = theta_s-1e-6 #numerical adjustment to avoid rho slightly above 917
-        theta_i   = np.minimum(0.02,(theta_s-1e-9)) #irreducible water content, Yamaguchi 2010, limited to availabe porosity
+        theta_i   = np.minimum(theta_irreducible,(theta_s-1e-9)) #irreducible water content, Yamaguchi 2010, limited to availabe porosity
         theta_i[self.rho>=RhoImp] = 0 #set 0 irreducible water content for ice lenses    
         theta_s[theta_s<1e-6] = 1e-9 #0 porosity of ice layers can cause numerical problems
         LWC_i     = theta_i*self.dz #corresponding irreducible water amount
@@ -764,7 +773,8 @@ def darcyscheme(self,iii):
         LWCav     = np.maximum(0,self.LWC-LWC_i) #LWC available for water flow
         LWCacm    = self.dz*theta_s-self.LWC #extra LWC that can be accomodated in each layer
         LWCacm[imp] = 0. #do not allow for water storage in impermeable ice lenses
-        i_inp     = np.where(np.cumsum(LWCacm)>=liq_input)[0][0] #lowest node that receives liq water input
+        nodes_with_capacity = np.where(np.cumsum(LWCacm)>=liq_input)[0] #nodes down to which the column can hold all the input
+        i_inp     = nodes_with_capacity[0] if nodes_with_capacity.size>0 else ncv-1 #lowest node that receives liq water input; if the column cannot hold the input, the excess runs off below
         if i_inp>=imptop[0]: #liq water input depth reaches an impermeable lens
             i_inp = imptop[0]-1 #do not allow for input water at and below the impermeable ice lens
         if i_inp==-1: #impermeable lens at the surface
