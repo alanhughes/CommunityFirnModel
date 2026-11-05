@@ -99,6 +99,9 @@ ALLOWED_VALUES = {
 # Keys that hold lists whose elements are validated against ALLOWED_VALUES.
 LIST_VALUED_KEYS = {'outputs', 'iso'}
 
+# The 'liquid' schemes whose melt removal does not read 'keep_firnthickness'.
+LIQUID_IGNORES_KEEP_FIRNTHICKNESS = {'darcy', 'resingledomain', 'prefsnowpack'}
+
 
 # Every configuration key the model recognizes. Used only to warn about
 # unknown keys (likely typos), so it does not need to be exhaustive to be
@@ -202,7 +205,9 @@ def validate_config(c, config_path=None):
     :param config_path: optional path to the source .json, used only to make
         error/warning messages more informative.
 
-    Prints a warning for each unrecognized key, then raises
+    Prints a warning for each unrecognized key, and when 'MELT' and
+    'keep_firnthickness' are true with a 'liquid' scheme that ignores the key in
+    its melt removal. Then raises
     ConfigValidationError (once, listing every problem found) if any required
     key is missing, a conditional requirement is unmet, or an option value is
     invalid. Returns None when the configuration is valid.
@@ -253,6 +258,15 @@ def validate_config(c, config_path=None):
             warnings.append(
                 "unrecognized key '{}' (possible typo?); it will be ignored"
                 .format(key))
+
+    # 6. A key that the selected scheme ignores -> warning only.
+    if (c.get('MELT') and c.get('keep_firnthickness')
+            and c.get('liquid') in LIQUID_IGNORES_KEEP_FIRNTHICKNESS):
+        warnings.append(
+            "'keep_firnthickness' is true, but the melt removal of the '{}' "
+            "scheme ignores it: the new bottom nodes take the thickness of "
+            "the bottom node. Sublimation and any step that uses 'bucket' "
+            "still follow the key".format(c['liquid']))
 
     src = " in {}".format(config_path) if config_path else ""
 

@@ -813,6 +813,8 @@ keep_firnthickness
 ------------------
   Controls grid behavior when melt removes surface layers. If True, the domain thickness is maintained by adding nodes at the base; if False, the original layer thicknesses are kept.
 
+  The melt removal of **bucket** and the sublimation code follow this key. The melt removal of **darcy**, **resingledomain** and **prefsnowpack** ignores it: the new bottom nodes take the thickness of the bottom node. The validator prints a warning for this case when **MELT** is true. A step of these three options that uses **bucket** follows the key.
+
   :type: ``boolean``
   :default: ``false``
 
