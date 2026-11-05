@@ -709,6 +709,8 @@ def darcyscheme(self,iii):
             phi            = np.maximum(0,phi) #avoid numerical errors of very small negative phi
             self.mass      = self.dz*self.rho #update mass
             self.age       = np.append(self.age[ind1:-1],self.age[-1]*np.ones(n_mlt)) #update age
+            self.bdot_mean = np.append(self.bdot_mean[ind1:-1],self.bdot_mean[-1]*np.ones(n_mlt)) #update bdot_mean
+            self.Dcon      = np.append(self.Dcon[ind1:-1],self.Dcon[-1]*np.ones(n_mlt)) #update Dcon
             self.LWC       = np.concatenate(([pm_lwc],self.LWC[ind1+1:-1],self.LWC[-1]*np.ones(n_mlt))) #update LWC
             self.Tz        = np.append(self.Tz[ind1:-1],self.Tz[-1]*np.ones(n_mlt)) #update temperature
             cp_i           = 152.5+7.122*self.Tz #specific heat of ice [J kg-1 K-1] Cuffey and Paterson 2010 (9.1)
