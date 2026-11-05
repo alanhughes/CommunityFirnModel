@@ -773,7 +773,8 @@ def darcyscheme(self,iii):
         LWCav     = np.maximum(0,self.LWC-LWC_i) #LWC available for water flow
         LWCacm    = self.dz*theta_s-self.LWC #extra LWC that can be accomodated in each layer
         LWCacm[imp] = 0. #do not allow for water storage in impermeable ice lenses
-        i_inp     = np.where(np.cumsum(LWCacm)>=liq_input)[0][0] #lowest node that receives liq water input
+        nodes_with_capacity = np.where(np.cumsum(LWCacm)>=liq_input)[0] #nodes down to which the column can hold all the input
+        i_inp     = nodes_with_capacity[0] if nodes_with_capacity.size>0 else ncv-1 #lowest node that receives liq water input; if the column cannot hold the input, the excess runs off below
         if i_inp>=imptop[0]: #liq water input depth reaches an impermeable lens
             i_inp = imptop[0]-1 #do not allow for input water at and below the impermeable ice lens
         if i_inp==-1: #impermeable lens at the surface
