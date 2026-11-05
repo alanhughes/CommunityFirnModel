@@ -760,7 +760,7 @@ darcy_ThickImp
 
 darcy_lateral_runoff
 --------------------
-  If True, the ``darcyscheme`` function computes lateral Darcy runoff from the node directly above an impermeable lens, and from the node directly above a saturated layer on that lens. If False, there is no such runoff. Water that the column cannot accept at the surface, and water in nodes above **darcy_rho_cap** at the end of the call, still runs off.
+  If True, the ``darcyscheme`` function computes lateral Darcy runoff from the node directly above an impermeable lens, and from each node directly above a saturated node in the layer on that lens. If False, there is no such runoff. Water that the column cannot accept at the surface, and water in nodes above **darcy_rho_cap** at the end of the call, still runs off.
 
   :type: ``boolean``
   :default: ``true``
