@@ -15,6 +15,7 @@ N_NODES = 60
 DENSITY = 400.0
 NODE_THICKNESS = 0.1
 MELT_THREE_NODES = 2.5 * DENSITY * NODE_THICKNESS / 917.0  # [m ie]: removes two nodes and part of a third
+MELT_FORCING = 'CFM_example_66.5_-46.25.pkl'  # DYE-2, which has melt
 
 
 def _melt_step(synthetic_column, scheme, **overrides):
@@ -67,6 +68,34 @@ def test_refrozen_replaces_the_value_of_the_last_step(synthetic_column, scheme):
 
 
 @pytest.mark.scheme
+def test_bucket_adds_the_second_refreeze(synthetic_column):
+    # Water under a lens has no room, so it ponds above the lens into cold nodes
+    # after the first refreeze. Only the second refreeze can freeze it.
+    rho, T, lwc = np.full(40, 400.0), np.full(40, 273.15), np.zeros(40)
+    rho[10:13], rho[21:] = 900.0, 900.0
+    T[:13], T[21:] = 263.15, 263.15
+    lwc[13:21] = 0.08
+    column = synthetic_column(n=40, rho_profile=rho, T_profile=T, dz=NODE_THICKNESS, LWC=lwc,
+                              config=dict(Ponding=True, DirectRunoff=0.0, RunoffZuoOerlemans=False, DownToIce=False,
+                                          ThickImp=0.1, RhoImp=830.0, ColeouLesaffre=True))
+    refreeze_total = melt.bucket(column, 0)[10]
+    assert refreeze_total > 0.0
+    assert column.refrozen.sum() == pytest.approx(refreeze_total, rel=1e-12)
+    assert np.all(column.refrozen[:5] == 0.0) and np.all(column.refrozen[5:10] > 0.0)
+
+
+@pytest.mark.scheme
+def test_darcy_keeps_the_refreeze_of_the_bottom_node(synthetic_column):
+    # The bottom node refreezes in the first sub-step. The later sub-steps melt only
+    # part of the top node, so the melt removal must keep the bottom value.
+    lwc = np.zeros(N_NODES)
+    lwc[-1] = 1e-3
+    column, refreeze_total = _melt_step(synthetic_column, 'darcyscheme', melt=1e-3, LWC=lwc)
+    assert column.refrozen[-1] > 0.0
+    assert column.refrozen.sum() == pytest.approx(refreeze_total, rel=1e-12)
+
+
+@pytest.mark.scheme
 def test_darcy_with_only_rain_keeps_node_order(synthetic_column):
     column, refreeze_total = _melt_step(synthetic_column, 'darcyscheme', melt=0.0, rain=0.05)
     assert refreeze_total > 0.0
@@ -100,7 +129,7 @@ def _results(run, *names):
 @pytest.mark.parametrize('liquid', ['bucket', 'darcy'])
 def test_output_sum_is_column_total_in_a_full_run(short_config, liquid):
     # A full run has dry steps, new surface nodes, and refreeze in the enthalpy solver.
-    run = short_config(years=2, start_year=1995, liquid=liquid, outputs=['refrozen', 'meltoutputs'],
+    run = short_config(years=2, start_year=1980, liquid=liquid, DFfile=MELT_FORCING, outputs=['refrozen', 'meltoutputs'],
                        grid_outputs=False, output_bits='float64')
     run.run()
     refrozen, refreeze = _results(run, 'refrozen', 'refreeze')
@@ -124,7 +153,7 @@ def test_output_lines_up_with_depth(short_config, monkeypatch):
         return outputs
 
     monkeypatch.setattr(firn_density_nospin, 'bucket', marked_bucket)
-    run = short_config(years=2, start_year=1995, liquid='bucket', outputs=['refrozen', 'age', 'meltoutputs'],
+    run = short_config(years=2, start_year=1980, liquid='bucket', DFfile=MELT_FORCING, outputs=['refrozen', 'age', 'meltoutputs'],
                        grid_outputs=False, output_bits='float64')
     run.run()
     refrozen, age = _results(run, 'refrozen', 'age')
