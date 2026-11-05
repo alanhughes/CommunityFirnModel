@@ -725,7 +725,7 @@ class FirnDensityNoSpin:
         ### which of these should go to output?
         if self.MELT:
             self.Trunoff        = np.array([0.]) #total runoff, single value for the whole firn column
-            self.refrozen       = np.zeros_like(self.dz) #vrefreezing in every layer, array of size of our grid
+            self.refrozen       = np.zeros_like(self.dz) #refreezing of each node at each time step [m we], in the node order of the state arrays
             self.totalrunoff    = np.array([0.]) # Might be useful to have a total final value without having to write every time step
             self.totalrefrozen  = np.zeros_like(self.dz) # Might be useful to have a total final value without having to write every time step
             self.totwatersublim = 0. #VV Total amount of liquid water that get sublimated
@@ -1247,6 +1247,7 @@ class FirnDensityNoSpin:
 
                     else: # Dry firn column and no input of meltwater                        
                         self.dzn     = self.dz[0:self.compboxes] # Not sure this is necessary
+                        self.refrozen = np.zeros_like(self.dz) # no refreezing
                         self.refreeze, self.runoff, self.meltvol, self.rainvol, self.dh_melt = 0.,0.,0.,0.,0.
                 ### end bucket ##################
 
@@ -1262,6 +1263,7 @@ class FirnDensityNoSpin:
                         self.meltvol = self.snowmeltSec[iii]*S_PER_YEAR*0.917 #[m w.e.]
                         self.rainvol = self.rainSec[iii]*S_PER_YEAR*0.917 #[m w.e.]
                     else: # Dry firn column and no input of meltwater                       
+                        self.refrozen = np.zeros_like(self.dz) # no refreezing
                         self.refreeze, self.runoff,self.meltvol,self.rainvol,self.dh_melt = 0.,0.,0.,0.,0.
                         self.dzn     = self.dz[0:self.compboxes] # Not sure this is necessary
                 ### end darcy ##################               
@@ -1432,6 +1434,8 @@ class FirnDensityNoSpin:
                 if self.doublegrid:
                     self.gridtrack = np.concatenate(([1],self.gridtrack[:-1]))
                 self.LWC        = np.concatenate(([0], self.LWC[:-1]))
+                if self.MELT:
+                    self.refrozen = np.concatenate(([0], self.refrozen[:-1]))
 
             else: # no accumulation during this time step
                 bd_flag = 'no accumulation'
@@ -1509,6 +1513,7 @@ class FirnDensityNoSpin:
 
             elif np.any(self.LWC>0.): # enthalpy diffusion if water in column
                 LWC0e = sum(self.LWC).copy()
+                LWC_pre_en = self.LWC.copy()
                 tot_mass_pre_en = np.sum(self.mass) + np.sum(self.LWC*1000)
                 sol_mass_pre_en = np.sum(self.mass)
                 liq_mass_pre_en = np.sum(self.LWC*1000)
@@ -1541,6 +1546,7 @@ class FirnDensityNoSpin:
 
                 en_refreeze = LWC0e-sum(self.LWC) # volume of liquid refrozen in enthalpy scheme
                 self.refreeze = self.refreeze + en_refreeze
+                self.refrozen = self.refrozen + LWC_pre_en - self.LWC # net refreezing in each node; negative if the solver melts ice in that node
                 
 
             self.T50     = np.mean(self.Tz[self.z<50]) # Temperature at 50 

@@ -71,7 +71,7 @@ class ModelOutputs:
                     else:
                         self.Mout_dict[varname] = np.zeros((TWlen+1,len(self.grid_out)+1),dtype=self.c['output_bits'])
 
-                    if varname == 'LWC':
+                    if varname in ['LWC', 'refrozen']:
                         self.Mout_dict[varname][0,:] = np.append(init_time,self.RGfun(MOd['z'], MOd[varname], self.grid_out))
                     elif varname != 'z':
                         Ifun = interpolate.interp1d(MOd['z'], MOd[varname], kind = intkind, fill_value='extrapolate')         
@@ -93,7 +93,7 @@ class ModelOutputs:
                 intkind = 'linear'
 
             if self.MOgrid:
-                if varname == 'LWC':
+                if varname in ['LWC', 'refrozen']:
                     self.Mout_dict[varname][Wtracker,:] = np.append(mtime,self.RGfun(MOd['z'], MOd[varname], self.grid_out))
                 elif ((varname == 'BCO') or (varname == 'DIP') or (varname == 'climate') or (varname == 'runoff') or (varname == 'refreeze') or (varname == 'meltvol')):
                     self.Mout_dict[varname][Wtracker,:] = np.append(mtime,MOd[varname])
@@ -110,7 +110,7 @@ class ModelOutputs:
     def RGfun(self, z, var, grid):
         '''
         Function to regrid the variables that can not be linearly interpolated
-        e.g. LWC needs to conserve mass. 
+        e.g. LWC and refrozen need to conserve mass. 
         '''
 
         varC = np.cumsum(var)
