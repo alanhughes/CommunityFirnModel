@@ -43,7 +43,7 @@ LIQUID_SCHEMES = ('darcy', 'bucket')
 # and the interpolation to a grid of example_df.json can hide a small difference.
 CASE_SETTINGS = {
     'years': 2,
-    'start_year': 1980,  # The default of --start-year. darcy runs bucket before 1980.
+    'start_year': 1980,  # The default of --start-year. At the default bucket_until_year, darcy runs bucket before 1980.
     'DFfile': 'CFM_example_66.5_-46.25.pkl',  # DYE-2, which has melt.
     'output_bits': 'float64',
     'grid_outputs': False,

@@ -113,6 +113,7 @@
 "darcy_dtmax": 3600,
 "darcy_theta_s_factor": 0.917,
 "darcy_theta_irreducible": 0.02,
+"bucket_until_year": 1980,
 "melt_strict": false,
 "SUBLIM": true,
 "keep_firnthickness": true,
