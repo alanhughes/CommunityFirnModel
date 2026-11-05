@@ -96,6 +96,8 @@ A scheme test calls one meltwater scheme once, on a synthetic column (see `Fixtu
      - ``bucket`` and ``darcyscheme``: the melted thickness ``dh_melt`` agrees with the melt mass divided by the density. ``darcyscheme`` gives the two interface nodes to the flux solvers, keeps each flux within the available water and pore space, and uses bisection when the first guess is far from equilibrium. Input above the capacity of the column runs off.
    * - ``test_fixtures.py``
      - ``bucket`` closes its water budget on a synthetic column and passes all its checks in strict mode. ``darcyscheme`` runs on a synthetic column and passes its checks.
+   * - ``test_refrozen.py``
+     - ``bucket`` and ``darcyscheme`` set the per-node refreeze: it sums to the column total and it agrees with the mass gain of each node. ``sublim`` keeps the sum when it removes nodes. The file also has ``conservation`` tests of the output of a full run, and ``unit`` tests of where the gridded output puts an amount.
    * - ``test_darcy_keys.py``
      - Each **darcy_** key reaches ``darcyscheme``. The defaults in the scheme and in the example configs are the same. The **bucket** keys do not reach the scheme.
    * - ``test_melt_removal.py``

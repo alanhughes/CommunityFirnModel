@@ -67,6 +67,8 @@ https://communityfirnmodel.readthedocs.io/en/latest/
 - *firn_density_nospin.py, config_validation.py, example .json files, run_CFM_example_notebook.ipynb* Added the config key "bucket_until_year" (default 1980; null means no switch). It sets the model year at which the darcy, prefsnowpack and resingledomain options stop using the bucket scheme, in place of a fixed 1980. A run that uses bucket because of this key prints one message at the start.
 
 ### Fixed
+- *melt.py, firn_density_nospin.py, sublim.py, ModelOutputs.py* The output "refrozen" was always zero for the bucket and darcy schemes. It now gives the refreezing in each node at each time step [m w.e.], in the node order of "depth". This includes the refreezing in the heat diffusion solver, so a row sums to "refreeze". The "refrozen" output of prefsnowpack and resingledomain also changes: it now follows the node order of "depth" and includes the refreezing in the solver. With "grid_outputs" true, it is regridded in the same way as "LWC".
+- *ModelOutputs.py* With "grid_outputs" true, the regridded "LWC" put each node one node too shallow and left out the top node. The values at each grid depth now change: each amount is at its own depth, and the last grid interval has a value.
 - *melt.py* The darcy scheme stopped with an IndexError when the liquid water input in a sub-step was more than the remaining capacity of the column, for example on an impermeable column or on saturated firn over ice. The excess now runs off.
 - *melt.py* The melt removal of the darcy scheme now shifts "Dcon" and "bdot_mean" with the other per-node arrays. This changes only the "Dcon" output. The regridding of doublegrid does not update "Dcon", so with doublegrid the labels still do not follow the layers.
 

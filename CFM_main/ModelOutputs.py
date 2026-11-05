@@ -71,7 +71,7 @@ class ModelOutputs:
                     else:
                         self.Mout_dict[varname] = np.zeros((TWlen+1,len(self.grid_out)+1),dtype=self.c['output_bits'])
 
-                    if varname == 'LWC':
+                    if varname in ['LWC', 'refrozen']:
                         self.Mout_dict[varname][0,:] = np.append(init_time,self.RGfun(MOd['z'], MOd[varname], self.grid_out))
                     elif varname != 'z':
                         Ifun = interpolate.interp1d(MOd['z'], MOd[varname], kind = intkind, fill_value='extrapolate')         
@@ -93,7 +93,7 @@ class ModelOutputs:
                 intkind = 'linear'
 
             if self.MOgrid:
-                if varname == 'LWC':
+                if varname in ['LWC', 'refrozen']:
                     self.Mout_dict[varname][Wtracker,:] = np.append(mtime,self.RGfun(MOd['z'], MOd[varname], self.grid_out))
                 elif ((varname == 'BCO') or (varname == 'DIP') or (varname == 'climate') or (varname == 'runoff') or (varname == 'refreeze') or (varname == 'meltvol')):
                     self.Mout_dict[varname][Wtracker,:] = np.append(mtime,MOd[varname])
@@ -110,12 +110,20 @@ class ModelOutputs:
     def RGfun(self, z, var, grid):
         '''
         Function to regrid the variables that can not be linearly interpolated
-        e.g. LWC needs to conserve mass. 
+        e.g. LWC and refrozen need to conserve mass. 
+
+        :param z: the top edge of each node
+        :param var: the amount in each node
+        :param grid: the top edge of each grid interval
+        :return: the amount in each grid interval. An amount is evenly spread over its node.
+        The last node is taken to be as thick as the node above it.
+        An amount below the end of the last grid interval is not included.
         '''
 
-        varC = np.cumsum(var)
-        newVar = np.interp(grid, z, varC)
-        return np.diff(newVar,append = newVar[-1])
+        node_edges = np.append(z, z[-1] + (z[-1] - z[-2]))
+        grid_edges = np.append(grid, grid[-1] + self.c['grid_output_res'])
+        amount_above = np.concatenate(([0], np.cumsum(var))) # the amount above each node edge
+        return np.diff(np.interp(grid_edges, node_edges, amount_above))
 
 
 

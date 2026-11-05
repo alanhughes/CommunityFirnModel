@@ -55,6 +55,8 @@ def bucket(self,iii):
     
     Coded by Vincent Verjans
 
+    Sets self.refrozen: the refreeze of each node in this call [m w.e.], in the node
+    order after the melt removal.
     '''
 
     ####################
@@ -436,6 +438,7 @@ def bucket(self,iii):
     cold_content    -= latheat                  # remaining cold content [J]
     cold_content[((cold_content<0) & (cold_content>-1e-9))] = 0
     refrozentot = sum(freeze)                   # total refrozen water [m we]
+    self.refrozen = freeze.copy()               # refreeze of each node [m we]
     deltaT = cold_content/(CP_I*self.mass)
     self.Tz[freeze>0] = T_MELT - deltaT[freeze>0] # update Tz [K]
     ##################
@@ -582,6 +585,7 @@ def bucket(self,iii):
     cold_content    -= latheat                  # remaining cold content [J]
     cold_content[((cold_content<0) & (cold_content>-1e-9))] = 0
     refrozentot = refrozentot + sum(freeze)                   # total refrozen water [m we]
+    self.refrozen = self.refrozen + freeze                    # refreeze of each node [m we]
     deltaT = cold_content/(CP_I*self.mass)
     self.Tz[freeze>0] = T_MELT - deltaT[freeze>0] # update Tz [K]
     
@@ -640,6 +644,10 @@ def darcyscheme(self,iii):
     The scheme does not read the bucket keys RhoImp, ThickImp and Slope.
     The first Darcy step is always 60 s. darcy_dtmin and darcy_dtmax apply from the second step.
     A lens seals if it is thicker than darcy_ThickImp (bucket: at least as thick as ThickImp).
+
+    Sets self.refrozen: the refreeze of each node over all Darcy steps [m w.e.], in the node
+    order after the last melt removal. Refreeze on a node that a later Darcy step melts, fully
+    or in part, moves to the new top node. So the sum of self.refrozen is the column total.
     '''
 
     ticdarcy = time.time()
@@ -679,6 +687,7 @@ def darcyscheme(self,iii):
     dltz           = np.append(self.dz[0:-1]/2+self.dz[1:]/2,self.dz[-1]/2) #distance between centres of nodes
     runofftot      = 0. #total runoff over the entire Darcy routine
     refr_tot        = 0. #total refreezing over the entire Darcy routine
+    self.refrozen   = np.zeros_like(self.dz) #refreezing of each node over the entire Darcy routine [m we]
     dh_melt        = 0. #thickness of melted nodes over the entire Darcy routine [m], negative
     if self.doublegrid: #if we have doublegrid: need to adjust gridtrack
         meltgridtrack  = np.copy(self.gridtrack) #prepare gridtrack adjusted for melting
@@ -727,6 +736,7 @@ def darcyscheme(self,iii):
             rg             = np.sqrt(self.r2) #grain radius [m]
             if self.doublegrid: #if we have doublegrid: need to adjust gridtrack
                 meltgridtrack  = np.concatenate((meltgridtrack[ind1:-1],meltgridtrack[-1]*np.ones(n_mlt)))
+            self.refrozen  = np.concatenate(([np.sum(self.refrozen[0:ind1+1])],self.refrozen[ind1+1:-1],[self.refrozen[-1]],np.zeros(ind1))) #refreeze of the melted nodes moves to the new top node; new bottom nodes have none
 
             # Liquid water input at surface node #
             liq_input  = meltstep_mass/1000+lwc_p+rainflux_vol*dtsub #[m we]
@@ -929,6 +939,7 @@ def darcyscheme(self,iii):
         self.Tz      = 273.15 - cold_content/(cp_i*self.mass) #updated temperatures of nodes
         cp_i         = 152.5+7.122*self.Tz #specific heat of ice [J kg-1 K-1] Cuffey and Paterson 2010 (9.1)
         refr_tot      = refr_tot+sum(refr)/1000 #add contributions to total refreezing [m we]
+        self.refrozen = self.refrozen+refr/1000 #add contributions to refreezing of each node [m we]
 
         timer = timer+dtsub #increase timer
         
