@@ -62,10 +62,10 @@ https://communityfirnmodel.readthedocs.io/en/latest/
 
 ## [Unreleased]
 ### New
-- *config_validation.py* The validator prints a warning when "keep_firnthickness" is true and "liquid" is "darcy", "resingledomain" or "prefsnowpack". The melt removal of these schemes ignores the key.
+- *config_validation.py* The validator prints a warning when "MELT" and "keep_firnthickness" are true and "liquid" is "darcy", "resingledomain" or "prefsnowpack". The melt removal of these schemes ignores the key.
 
 ### Fixed
-- *melt.py* The melt removal of the darcy scheme now shifts "Dcon" and "bdot_mean" with the other per-node arrays. This changes only the "Dcon" output.
+- *melt.py* The melt removal of the darcy scheme now shifts "Dcon" and "bdot_mean" with the other per-node arrays. This changes only the "Dcon" output. The regridding of doublegrid does not update "Dcon", so with doublegrid the labels still do not follow the layers.
 
 ## [3.2.0] 2026-08-25
 ### Notes
