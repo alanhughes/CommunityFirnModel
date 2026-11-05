@@ -60,6 +60,13 @@ https://communityfirnmodel.readthedocs.io/en/latest/
 	- I am working on adding turbulent flux calculations to the SEB module
 
 
+## [Unreleased]
+### New
+- *config_validation.py* The validator prints a warning when "keep_firnthickness" is true and "liquid" is "darcy", "resingledomain" or "prefsnowpack". The melt removal of these schemes ignores the key.
+
+### Fixed
+- *melt.py* The melt removal of the darcy scheme now shifts "Dcon" and "bdot_mean" with the other per-node arrays. This changes only the "Dcon" output.
+
 ## [3.2.0] 2026-08-25
 ### Notes
 - This release focuses on ease of use (examples, documentation, config validation) and on the meltwater-refreezing solver, which now offers several interchangeable schemes.
