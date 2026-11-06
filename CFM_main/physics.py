@@ -488,9 +488,10 @@ class FirnPhysics:
         if self.bdot_type == 'instant':
             if self.iii==0:
                 print("It is not recommended to use instant accumulation with Simonsen physics")
-            gamma = 61.7 / (A_instant ** (0.5)) * np.exp(-3800. / (R * self.T_mean[self.iii]))
-            dr_dt[self.rho < RHO_1]  = F0 * (RHO_I - self.rho[self.rho < RHO_1]) * ar1 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho < RHO_1]) + Eg / (R * self.T_mean[self.iii]))
-            dr_dt[self.rho >= RHO_1] = F1 * gamma * (RHO_I - self.rho[self.rho >= RHO_1]) * ar2 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho >= RHO_1]) + Eg / (R * self.T_mean[self.iii]))
+            if A_instant > 0: # ln(0) or 1/sqrt(0) gives NaN. dr_dt stays 0, which is the limit of the rate as A_instant goes to 0.
+                gamma = 61.7 / (A_instant ** (0.5)) * np.exp(-3800. / (R * self.T_mean[self.iii]))
+                dr_dt[self.rho < RHO_1]  = F0 * (RHO_I - self.rho[self.rho < RHO_1]) * ar1 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho < RHO_1]) + Eg / (R * self.T_mean[self.iii]))
+                dr_dt[self.rho >= RHO_1] = F1 * gamma * (RHO_I - self.rho[self.rho >= RHO_1]) * ar2 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho >= RHO_1]) + Eg / (R * self.T_mean[self.iii]))
         elif self.bdot_type == 'mean':
             gamma = 61.7 / (A_mean_2 ** (0.5)) * np.exp(-3800.0 / (R * self.T_mean[self.iii]))
             dr_dt[self.rho < RHO_1]  = F0 * (RHO_I - self.rho[self.rho < RHO_1]) * ar1 * A_mean_1 * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho < RHO_1]) + Eg / (R * self.T_mean[self.iii]))
@@ -527,12 +528,13 @@ class FirnPhysics:
             if self.iii==0:
                 print("It is not recommended to use instant accumulation with Ligtenberg 2011 physics")
             A_instant = self.bdotSec[self.iii] * self.steps * S_PER_YEAR * RHO_I_MGM * 1000
-            M_0 = 1.435 - 0.151 * np.log(A_instant)
-            M_1 = 2.366 - 0.293 * np.log(A_instant)
-            M_0 = np.max((0.25,M_0))
-            M_1 = np.max((0.25,M_1))
-            dr_dt[self.rho < RHO_1]  = (RHO_I - self.rho[self.rho < RHO_1]) * M_0 * ar1 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho < RHO_1]) + Eg / (R * self.T_mean[self.iii]))
-            dr_dt[self.rho >= RHO_1] = (RHO_I - self.rho[self.rho >= RHO_1]) * M_1 * ar2 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho >= RHO_1])+ Eg / (R * self.T_mean[self.iii]))
+            if A_instant > 0: # ln(0) or 1/sqrt(0) gives NaN. dr_dt stays 0, which is the limit of the rate as A_instant goes to 0.
+                M_0 = 1.435 - 0.151 * np.log(A_instant)
+                M_1 = 2.366 - 0.293 * np.log(A_instant)
+                M_0 = np.max((0.25,M_0))
+                M_1 = np.max((0.25,M_1))
+                dr_dt[self.rho < RHO_1]  = (RHO_I - self.rho[self.rho < RHO_1]) * M_0 * ar1 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho < RHO_1]) + Eg / (R * self.T_mean[self.iii]))
+                dr_dt[self.rho >= RHO_1] = (RHO_I - self.rho[self.rho >= RHO_1]) * M_1 * ar2 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho >= RHO_1])+ Eg / (R * self.T_mean[self.iii]))
         elif self.bdot_type == 'mean':
             A_mean_1 = self.bdot_mean[self.rho < RHO_1] * RHO_I
             A_mean_2 = self.bdot_mean[self.rho >= RHO_1] * RHO_I
@@ -721,12 +723,13 @@ class FirnPhysics:
             A_instant = self.bdotSec[self.iii] * self.steps * S_PER_YEAR * RHO_I_MGM * 1000
             if self.iii==0:
                 print("It is not recommended to use instant accumulation with Ligtenberg 2011 physics")
-            M_0 = 1.042 - 0.0916 * np.log(A_instant)
-            M_1 = 1.734 - 0.2039 * np.log(A_instant)
-            M_0 = np.max((0.25,M_0))
-            M_1 = np.max((0.25,M_1))
-            dr_dt[self.rho < RHO_1]  = (RHO_I - self.rho[self.rho < RHO_1]) * M_0 * ar1 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho < RHO_1]) + Eg / (R * self.T_mean[self.iii]))
-            dr_dt[self.rho >= RHO_1] = (RHO_I - self.rho[self.rho >= RHO_1]) * M_1 * ar2 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho >= RHO_1])+ Eg / (R * self.T_mean[self.iii]))
+            if A_instant > 0: # ln(0) or 1/sqrt(0) gives NaN. dr_dt stays 0, which is the limit of the rate as A_instant goes to 0.
+                M_0 = 1.042 - 0.0916 * np.log(A_instant)
+                M_1 = 1.734 - 0.2039 * np.log(A_instant)
+                M_0 = np.max((0.25,M_0))
+                M_1 = np.max((0.25,M_1))
+                dr_dt[self.rho < RHO_1]  = (RHO_I - self.rho[self.rho < RHO_1]) * M_0 * ar1 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho < RHO_1]) + Eg / (R * self.T_mean[self.iii]))
+                dr_dt[self.rho >= RHO_1] = (RHO_I - self.rho[self.rho >= RHO_1]) * M_1 * ar2 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho >= RHO_1])+ Eg / (R * self.T_mean[self.iii]))
 
         elif self.bdot_type == 'mean':
             A_mean_1 = self.bdot_mean[self.rho < RHO_1] * RHO_I
@@ -795,12 +798,13 @@ class FirnPhysics:
             A_instant = self.bdotSec[self.iii] * self.steps * S_PER_YEAR * RHO_I_MGM * 1000
             if self.iii==0:
                 print("It is not recommended to use instant accumulation with Ligtenberg 2011 physics")
-            M_0 = alpha_550 - beta_550 * np.log(A_instant)
-            M_1 = alpha_830 - beta_830 * np.log(A_instant)
-            M_0 = np.max((0.25,M_0))
-            M_1 = np.max((0.25,M_1))
-            dr_dt[self.rho < RHO_1]  = (RHO_I - self.rho[self.rho < RHO_1]) * M_0 * ar1 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho < RHO_1]) + Eg / (R * self.T_mean[self.iii]))
-            dr_dt[self.rho >= RHO_1] = (RHO_I - self.rho[self.rho >= RHO_1]) * M_1 * ar2 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho >= RHO_1])+ Eg / (R * self.T_mean[self.iii]))
+            if A_instant > 0: # ln(0) or 1/sqrt(0) gives NaN. dr_dt stays 0, which is the limit of the rate as A_instant goes to 0.
+                M_0 = alpha_550 - beta_550 * np.log(A_instant)
+                M_1 = alpha_830 - beta_830 * np.log(A_instant)
+                M_0 = np.max((0.25,M_0))
+                M_1 = np.max((0.25,M_1))
+                dr_dt[self.rho < RHO_1]  = (RHO_I - self.rho[self.rho < RHO_1]) * M_0 * ar1 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho < RHO_1]) + Eg / (R * self.T_mean[self.iii]))
+                dr_dt[self.rho >= RHO_1] = (RHO_I - self.rho[self.rho >= RHO_1]) * M_1 * ar2 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho >= RHO_1])+ Eg / (R * self.T_mean[self.iii]))
 
         elif self.bdot_type == 'mean':
             A_mean_1 = self.bdot_mean[self.rho < RHO_1] * RHO_I
@@ -848,12 +852,13 @@ class FirnPhysics:
             A_instant = self.bdotSec[self.iii] * self.steps * S_PER_YEAR * RHO_I_MGM * 1000
             if self.iii==0:
                 print("It is not recommended to use instant accumulation with Ligtenberg 2011 physics")
-            M_0 = 1.042 - 0.0916 * np.log(A_instant)
-            M_1 = 1.734 - 0.2039 * np.log(A_instant)
-            M_0 = np.max((0.25,M_0))
-            M_1 = np.max((0.25,M_1))
-            dr_dt[self.rho < RHO_1]  = (RHO_I - self.rho[self.rho < RHO_1]) * M_0 * ar1 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho < RHO_1]) + Eg / (R * self.T_mean[self.iii]))
-            dr_dt[self.rho >= RHO_1] = (RHO_I - self.rho[self.rho >= RHO_1]) * M_1 * ar2 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho >= RHO_1])+ Eg / (R * self.T_mean[self.iii]))
+            if A_instant > 0: # ln(0) or 1/sqrt(0) gives NaN. dr_dt stays 0, which is the limit of the rate as A_instant goes to 0.
+                M_0 = 1.042 - 0.0916 * np.log(A_instant)
+                M_1 = 1.734 - 0.2039 * np.log(A_instant)
+                M_0 = np.max((0.25,M_0))
+                M_1 = np.max((0.25,M_1))
+                dr_dt[self.rho < RHO_1]  = (RHO_I - self.rho[self.rho < RHO_1]) * M_0 * ar1 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho < RHO_1]) + Eg / (R * self.T_mean[self.iii]))
+                dr_dt[self.rho >= RHO_1] = (RHO_I - self.rho[self.rho >= RHO_1]) * M_1 * ar2 * A_instant * GRAVITY * np.exp(-Ec / (R * self.Tz[self.rho >= RHO_1])+ Eg / (R * self.T_mean[self.iii]))
 
         elif self.bdot_type == 'mean':
             A_mean_1 = self.bdot_mean[self.rho < RHO_1] * RHO_I
