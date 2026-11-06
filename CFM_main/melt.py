@@ -1219,7 +1219,7 @@ def darcyscheme(self,iii):
             self.compaction = np.concatenate((self.compaction[ind1:-1], np.zeros(n_mlt)))
             self.bdot_mean = np.append(self.bdot_mean[ind1:-1], self.bdot_mean[-1] * np.ones(n_mlt))
             self.Dcon = np.append(self.Dcon[ind1:-1], self.Dcon[-1] * np.ones(n_mlt))
-            refr_layer = np.concatenate((refr_layer[ind1:-1], np.zeros(n_mlt)))
+            refr_layer = np.concatenate((refr_layer[ind1:-1], [refr_layer[-1]], np.zeros(n_mlt - 1)))  # the bottom node stays, so it keeps its value; the new nodes have none
             self.Tz   = np.append(self.Tz[ind1:-1], self.Tz[-1] * np.ones(n_mlt))
             cp_i      = 152.5 + 7.122 * self.Tz                # specific heat of ice [J kg-1 K-1] (Cuffey & Paterson 2010, Eq. 9.1)
             self.r2   = np.append(self.r2[ind1:-1], self.r2[-1] * np.ones(n_mlt))
