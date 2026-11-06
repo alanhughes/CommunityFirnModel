@@ -26,6 +26,18 @@ Each test has one marker. Select a group with `-m`, for example `python -m pytes
 
 The CFM modules in `CFM_main/` are flat scripts, not an installable package. As a temporary workaround, the tests put `CFM_main/` on `sys.path` and run in that folder.
 
+## Oracles
+
+An oracle is a function in the test code that gives the exact answer to a simplified problem. It is not the truth, so a difference is an error only when the scheme and the oracle make the same assumptions about the quantity under test.
+
+`oracles/kinematic_wave.py` gives a wetting front that moves down into uniform firn with no capillary gradients. Its docstring has the derivation, with distinct densities for ice and water.
+
+- `solve_front`: the state behind the front and the front speed, for a general flux law. The test passes the law as `flux_law(theta, porosity)`, for example `hydrconducsat_Calonne` times `krel_vG`. The module does not import the CFM.
+- `power_law_front`: the closed form for q = K φ³ S².
+- `front_speed`: the speed from the states on the two sides of the front.
+
+Both front functions take the cold degrees of the firn ahead of the front. They raise `ValueError` if the pores freeze shut, or if the law cannot carry the flux. `test_oracles.py` checks them against values calculated by hand.
+
 ## Compare two commits
 
 `compare_commits.py` checks that two commits give the same model results. Run it by hand before you close a change that must keep the results. Put the result in the PR description. Commit your work first, because the script reads commits only.
