@@ -77,3 +77,14 @@ def test_darcy_fluxes_are_within_the_available_water_and_pore_space(darcy_wettin
         assert 0.0 <= call['flux'] <= call['upper_bound'] * (1 + 1e-12), call
     saturated_water = (917.0 - column.rho) / 917.0 * 0.917 * column.dz
     assert np.all(column.LWC <= saturated_water)
+
+
+@pytest.mark.scheme
+def test_darcy_uses_bisection_when_the_first_guess_is_far_from_equilibrium(darcy_wetting_front):
+    # darcyscheme starts with bisection when |f_eq| > 1 m at the first guess,
+    # and with Newton-Raphson otherwise. The front gives f_eq < -1 at many interfaces.
+    _, calls = darcy_wetting_front
+    assert any(call['f_eq'] < -1.0 for call in calls)
+    for call in calls:
+        expected = 'flux_bisection' if abs(call['f_eq']) > 1.0 else 'flux_newtonraphson'
+        assert call['solver'] == expected, call
