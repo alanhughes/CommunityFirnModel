@@ -97,9 +97,9 @@ A scheme test calls one meltwater scheme once, on a synthetic column (see `Fixtu
    * - ``test_fixtures.py``
      - ``bucket`` closes its water budget on a synthetic column and passes all its checks in strict mode. ``darcyscheme`` runs on a synthetic column and passes its checks.
    * - ``test_refrozen.py``
-     - ``bucket`` and ``darcyscheme`` set the per-node refreeze: it sums to the column total and it agrees with the mass gain of each node. ``sublim`` keeps the sum when it removes nodes. The file also has ``conservation`` tests of the output of a full run, and ``unit`` tests of where the gridded output puts an amount.
+     - ``bucket`` and ``darcyscheme`` set the per-node refreeze, and it agrees with the mass gain of each node. For ``bucket`` it sums to the column total. For ``darcyscheme`` the sum leaves out the refreeze of nodes that melt later in the call. Melt removal and ``sublim`` keep the value of the bottom node. The file also has ``conservation`` tests of the output of a full run, and ``unit`` tests of where the gridded output puts an amount.
    * - ``test_darcy_keys.py``
-     - Each **darcy_** key reaches ``darcyscheme``. The defaults in the scheme and in the example configs are the same. The **bucket** keys do not reach the scheme.
+     - Each key of the **darcy** scheme reaches ``darcyscheme``. **ColeouLesaffre** and **IrrVal** set its irreducible water. The defaults in the scheme and in the example configs are the same. The **RhoImp**, **ThickImp** and **Slope** keys of the **bucket** scheme do not reach it.
    * - ``test_melt_removal.py``
      - ``bucket`` and ``darcyscheme`` shift ``bdot_mean`` and ``Dcon`` when melt removes nodes. The file also has ``unit`` tests of the warning for the schemes that ignore **keep_firnthickness** in their melt removal.
 

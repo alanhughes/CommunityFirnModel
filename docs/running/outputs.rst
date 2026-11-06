@@ -140,10 +140,6 @@ Reading the results
 
 With ``grid_outputs`` false and an older results file (before 4.0.0), ``depth`` is a single row (a 1-D axis); see the changelog for the format changes of each version.
 
-refrozen: (m w.e.) the refreezing in each node at that time step, corresponds to ‘depth’. It includes the refreezing in the **liquid** scheme and in the heat diffusion solver, so a row sums to the refreeze value of that time step, unless the bottom node refreezes water and leaves the column at that step. Refreezing in a node that melt or sublimation removes later in the same time step is in the new top node, so refreeze counts it even though that ice has gone. A value can be negative if the heat diffusion solver melts ice in that node. If "grid_outputs" = True, refrozen and LWC are amounts for each grid interval: the value at a grid depth is the amount from that depth to the next grid depth. An amount below the end of the grid is not included, so use "grid_outputs" = False if a row must sum exactly to refreeze.
-
-All four **liquid** schemes (``bucket``, ``darcy``, ``prefsnowpack``, ``resingledomain``) write meltvol, refreeze and runoff.
-
 **References**
 *Goujon, C., Barnola, J.-M., and Ritz, C. (2003), Modeling the densification of polar firn including heat diffusion: Application to close-off characteristics and gas isotopic fractionation for Antarctica and Greenland sites, J. Geophys. Res., 108, 4792, doi:10.1029/2002JD003319, D24.*
 

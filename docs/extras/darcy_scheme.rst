@@ -268,6 +268,9 @@ bucket scheme, see :doc:`bucket_scheme`) are also read by this scheme.
        Darcy's-law formulation using slope as a proxy gradient
        (``'Darcy'``, via ``runoffDarcy``). An unrecognized value causes
        the model to exit.
+   * - **theta_s_factor_darcy**
+     - Fraction of the porosity that water can fill at saturation. It does
+       not change the limit on refreezing.
 
 Key variables reference
 =========================

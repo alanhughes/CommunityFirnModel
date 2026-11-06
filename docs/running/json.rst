@@ -842,7 +842,7 @@ IrrVal
 
 RhoImp
 ------
-  Density at or above which a layer is treated as an impermeable ice lens that blocks percolation. This key controls the **bucket** scheme and not the ``darcyscheme`` function, which reads **darcy_RhoImp**. So a comparison of the two schemes must set both keys.
+  Density at or above which a layer is treated as an impermeable ice lens that blocks percolation. This key controls the **bucket** scheme and not the ``darcyscheme`` function, which reads **RhoImp_darcy**. So a comparison of the two schemes must set both keys.
 
   :type: ``float``
   :default: ``830``
@@ -850,7 +850,7 @@ RhoImp
 
 ThickImp
 --------
-  Minimum thickness for an ice lens (density :math:`\geq` **RhoImp**) to be treated as impermeable. Set to 0 to make every ice layer impermeable. Used only when **DownToIce** is False and **LeakyLenses** is False (bucket scheme).
+  Minimum thickness for an ice lens (density :math:`\geq` **RhoImp**) to be treated as impermeable. Set to 0 to make every ice layer impermeable. Used only when **DownToIce** is False and **LeakyLenses** is False (bucket scheme). This key controls the **bucket** scheme and not the ``darcyscheme`` function, which reads **ThickImp_darcy**. So a comparison of the two schemes must set both keys.
 
   :type: ``float``
   :default: ``0.1``
@@ -901,70 +901,10 @@ RunoffZuoOerlemans
 
 Slope
 -----
-  Surface slope (rise/run) used in the Zuo and Oerlemans (1996) lateral-runoff calculation. Only used when **RunoffZuoOerlemans** is True. This key controls the **bucket** scheme and not the ``darcyscheme`` function, which reads **darcy_slope**. So a comparison of the two schemes must set both keys.
+  Surface slope (rise/run) used in the Zuo and Oerlemans (1996) lateral-runoff calculation. Only used when **RunoffZuoOerlemans** is True. This key controls the **bucket** scheme and not the ``darcyscheme`` function, which reads **slope_proxy_darcy**. So a comparison of the two schemes must set both keys.
 
   :type: ``float``
   :default: ``0.1``
-
-darcy_RhoImp
-------------
-  Density at or above which the ``darcyscheme`` function treats a layer as an ice lens. The **darcy** option runs the **bucket** scheme before the model year in **bucket_until_year**, so all **darcy_** keys apply only from that year. In the earlier years, the **bucket** keys apply. This value must not be above **darcy_rho_cap**, or the run stops.
-
-  :type: ``float``
-  :default: ``873.0``
-  :units: :math:`\textrm{kg m}^{-3}`
-
-darcy_ThickImp
---------------
-  The ``darcyscheme`` function treats a lens as impermeable if the lens is thicker than this value. A lens exactly this thick is not impermeable. The **bucket** scheme differs: a lens exactly **ThickImp** thick is impermeable. The lowest lens in the column is always impermeable.
-
-  :type: ``float``
-  :default: ``0.5``
-  :units: :math:`\textrm{m}`
-
-darcy_lateral_runoff
---------------------
-  If True, the ``darcyscheme`` function computes lateral Darcy runoff from the node directly above an impermeable lens, and from each node directly above a saturated node in the layer on that lens. If False, there is no such runoff. Water that the column cannot accept at the surface, and water in nodes above **darcy_rho_cap** at the end of the call, still runs off.
-
-  :type: ``boolean``
-  :default: ``true``
-
-darcy_slope
------------
-  Slope (rise/run) in the lateral Darcy runoff of the ``darcyscheme`` function. Used only when **darcy_lateral_runoff** is True.
-
-  :type: ``float``
-  :default: ``0.02``
-
-darcy_rho_cap
--------------
-  Upper limit on the density that the flow calculation of the ``darcyscheme`` function uses, so that a lens stays a little permeable. Liquid water in a node above this density runs off at the end of the call.
-
-  :type: ``float``
-  :default: ``910.0``
-  :units: :math:`\textrm{kg m}^{-3}`
-
-darcy_dtmin, darcy_dtmax
-------------------------
-  Lower and upper limits on the sub-step of the ``darcyscheme`` function. The first sub-step of each call is always 60 s, whatever these limits are. The limits apply from the second sub-step. The last sub-step of a call can be shorter than **darcy_dtmin**, so that the call ends at the end of the model step. If the two limits conflict, **darcy_dtmax** takes priority.
-
-  :type: ``float``
-  :default: ``60`` and ``3600``
-  :units: :math:`\textrm{s}`
-
-darcy_theta_s_factor
---------------------
-  The fraction of the porosity that water can fill at saturation in the ``darcyscheme`` function. This key does not change the limit on refreezing, which uses a separate factor of 0.917.
-
-  :type: ``float``
-  :default: ``0.917``
-
-darcy_theta_irreducible
------------------------
-  Irreducible volumetric water content in the ``darcyscheme`` function. Water at or below this content does not flow. The value is 0 in a lens, and it is limited to the water content at saturation.
-
-  :type: ``float``
-  :default: ``0.02``
 
 bucket_until_year
 -----------------
@@ -1025,7 +965,14 @@ debug_bucket
   :type: ``boolean``
   :default: ``false``
 
-These keys configure the Darcy percolation scheme (**liquid** = ``darcy``). **ColeouLesaffre** and **IrrVal** (above) are also read by this scheme.
+These keys configure the Darcy percolation scheme (**liquid** = ``darcy``). **ColeouLesaffre** and **IrrVal** (above) are also read by this scheme. **ColeouLesaffre** false and **IrrVal** 0 give a scheme with no irreducible water. The **darcy** option runs the **bucket** scheme before the model year in **bucket_until_year**, so these keys apply only from that year. In the earlier years, the **bucket** keys apply.
+
+theta_s_factor_darcy
+--------------------
+  The fraction of the porosity that water can fill at saturation in the Darcy scheme. This key does not change the limit on refreezing, which uses a separate factor of 0.917.
+
+  :type: ``float``
+  :default: ``0.917``
 
 dtmin_darcy
 -----------
@@ -1045,7 +992,7 @@ dtmax_darcy
 
 dtsub_darcy
 -----------
-  Starting internal time step for the Darcy routine, before adaptive sub-stepping adjusts it.
+  Starting internal time step for the Darcy routine, before adaptive sub-stepping adjusts it. The code does not limit this first sub-step, so **dtmin_darcy** and **dtmax_darcy** apply from the second sub-step. The last sub-step of a call can be shorter than **dtmin_darcy**. If the two limits conflict, **dtmax_darcy** wins.
 
   :type: ``float``
   :default: ``60``
@@ -1061,7 +1008,7 @@ RhoImp_darcy
 
 ThickImp_darcy
 --------------
-  Minimum thickness for an ice lens (density :math:`\geq` **RhoImp_darcy**) to be treated as impermeable, for the Darcy scheme. Analogous to **ThickImp**.
+  Minimum thickness for an ice lens (density :math:`\geq` **RhoImp_darcy**) to be treated as impermeable, for the Darcy scheme. Analogous to **ThickImp**. A lens exactly this thick is impermeable. The lowest lens in the column is always impermeable.
 
   :type: ``float``
   :default: ``0.5``
@@ -1069,7 +1016,7 @@ ThickImp_darcy
 
 lat_runoff_darcy
 ----------------
-  Whether to compute lateral runoff for water that accumulates above an impermeable barrier with no further downward path.
+  Whether to compute lateral runoff for water that accumulates above an impermeable barrier with no further downward path. With false, water that the column cannot accept at the surface, and water in nodes above **rholim_dcy** at the end of the call, still runs off.
 
   :type: ``boolean``
   :default: ``true``

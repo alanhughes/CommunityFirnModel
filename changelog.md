@@ -61,7 +61,15 @@ https://communityfirnmodel.readthedocs.io/en/latest/
 	- Vapor-phase transport (vapor.py) is in development and is not part of the release
 
 ## [Unreleased]
+### New
+- *melt.py, config_validation.py, example.json, example_df.json, example_csv.json, example.toml, run_CFM_example_notebook.ipynb* Added the config key `theta_s_factor_darcy` (default 0.917): the fraction of the porosity that water can fill at saturation in the Darcy scheme. Existing configurations give the same results. The example configs and the notebook now list all the Darcy keys.
+- *config_validation.py* The validator prints a warning when `MELT` and `keep_firnthickness` are true and `liquid` is `darcy`, `resingledomain` or `prefsnowpack`. The melt removal of these schemes ignores the key.
+- *firn_density_nospin.py, config_validation.py, example.json, example_df.json, example_csv.json, example.toml, run_CFM_example_notebook.ipynb* Added the config key `bucket_until_year` (default 1980; `null` means no switch). It sets the model year at which the `darcy`, `prefsnowpack` and `resingledomain` options stop using the bucket scheme, in place of a fixed 1980. A run that uses bucket because of this key prints one message at the start.
+
 ### Bug fixes
+- *melt.py* The Darcy scheme stopped with an `IndexError` when the liquid water input in a sub-step was more than the remaining capacity of the column, for example on an impermeable column or on saturated firn over ice. The excess now runs off.
+- *melt.py* The melt removal of the Darcy scheme now shifts `Dcon` and `bdot_mean` with the other per-node arrays. This changes only the `Dcon` output. The regridding of doublegrid does not update `Dcon`, so with doublegrid the labels still do not follow the layers.
+- *melt.py, sublim.py* Melt removal in the Darcy scheme and sublimation set the `refrozen` value of the bottom node to zero, although that node stays in the column. It now keeps its value. This changes only the `refrozen` output, and only if the bottom node refreezes water.
 - *physics.py* **`Li2015` runs with `bdot_type` `instant`.** The `instant` branch set `beta1a` and `beta2a` but read `beta1` and `beta2`, so the model stopped with an `UnboundLocalError`. It now reads `beta1a` and `beta2a`. Results with `mean` do not change.
 - *physics.py* **`HLSigfus`: a node at exactly 550 kg m-3 has a rate.** No zone mask included this density, so the rate of the node was zero. The node now uses the transition equation. Results change only for a node at exactly this density.
 - *physics.py* **A rate of 0 at zero instant accumulation.** With `bdot_type` `instant` and no accumulation in a time step, `Ligtenberg2011`, `KuipersMunneke2015`, `Brils2022`, `Veldhuijsen2023` and `Simonsen2013` gave a NaN rate, from ln(0) or 1/sqrt(0) multiplied by 0. They now give 0, which is the limit of the equations. Results change only for those time steps.
@@ -178,18 +186,6 @@ https://communityfirnmodel.readthedocs.io/en/latest/
 - `DIPhorizon` is not handled correctly on restarts (documented in the code).
 - `SEB.py` option 3 still converts mass fluxes with `* stepsperyear / 917`, while the other forcing paths use `flux_to_rate` (identical for evenly spaced steps).
 - Louis (1979) stability-function coefficients and several other coefficients in `SEB_turbulent.py` are unverified (`VERIFY` comments).
-
-## [Unreleased]
-### New
-- *melt.py, config_validation.py, example .json files, run_CFM_example_notebook.ipynb* Added config keys for the parameters of the darcy scheme: "darcy_RhoImp", "darcy_ThickImp", "darcy_lateral_runoff", "darcy_slope", "darcy_rho_cap", "darcy_dtmin", "darcy_dtmax", "darcy_theta_s_factor" and "darcy_theta_irreducible". Each default is the earlier hard-coded value, so existing configurations give the same results. The darcy scheme does not read "RhoImp", "ThickImp" or "Slope", so a comparison with the bucket scheme must set both sets of keys.
-- *config_validation.py* The validator prints a warning when "MELT" and "keep_firnthickness" are true and "liquid" is "darcy", "resingledomain" or "prefsnowpack". The melt removal of these schemes ignores the key.
-- *firn_density_nospin.py, config_validation.py, example .json files, run_CFM_example_notebook.ipynb* Added the config key "bucket_until_year" (default 1980; null means no switch). It sets the model year at which the darcy, prefsnowpack and resingledomain options stop using the bucket scheme, in place of a fixed 1980. A run that uses bucket because of this key prints one message at the start.
-
-### Fixed
-- *melt.py, firn_density_nospin.py, sublim.py, ModelOutputs.py* The output "refrozen" was always zero for the bucket and darcy schemes. It now gives the refreezing in each node at each time step [m w.e.], in the node order of "depth". This includes the refreezing in the heat diffusion solver, so a row sums to "refreeze". The "refrozen" output of prefsnowpack and resingledomain also changes: it now follows the node order of "depth" and includes the refreezing in the solver. With "grid_outputs" true, it is regridded in the same way as "LWC".
-- *ModelOutputs.py* With "grid_outputs" true, the regridded "LWC" put each node one node too shallow and left out the top node. The values at each grid depth now change: each amount is at its own depth, and the last grid interval has a value.
-- *melt.py* The darcy scheme stopped with an IndexError when the liquid water input in a sub-step was more than the remaining capacity of the column, for example on an impermeable column or on saturated firn over ice. The excess now runs off.
-- *melt.py* The melt removal of the darcy scheme now shifts "Dcon" and "bdot_mean" with the other per-node arrays. This changes only the "Dcon" output. The regridding of doublegrid does not update "Dcon", so with doublegrid the labels still do not follow the layers.
 
 ## [3.2.0] 2026-08-25
 ### Notes
