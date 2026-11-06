@@ -185,6 +185,7 @@ Ponding = false                        # blocked water ponds above the barrier i
 DirectRunoff = 0.0                     # fraction of blocked water that runs off at once (Ponding)
 RunoffZuoOerlemans = false             # lateral runoff of ponded water after Zuo and Oerlemans (1996) (Ponding)
 Slope = 0.1                            # surface slope for that parameterization (RunoffZuoOerlemans)
+bucket_until_year = 1980               # darcy, prefsnowpack and resingledomain run bucket before this model year
 melt_strict = false                    # stop the run if the water-budget check fails (true; false: print a message)
 debug_bucket = false                   # print diagnostics from the bucket scheme at each step
 
@@ -204,6 +205,7 @@ eps_cvg_darcy = 0.0001                 # convergence tolerance of the flux solve
 # lateral runoff parameterization
 # options: ZuoOerlemans, Darcy
 runoff_method_darcy = "Darcy"
+theta_s_factor_darcy = 0.917           # fraction of the porosity that water can fill at saturation
 
 ######################################################################
 # Surface energy balance (SEB)

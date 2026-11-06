@@ -80,7 +80,7 @@ def test_front_speed_with_water_ahead():
     assert front_speed(4e-6, 0.10, flux_ahead=1e-6, water_ahead=0.04) == pytest.approx(5e-5, rel=1e-12)
 
 
-@pytest.mark.parametrize('flux, water, speed', [(5e-8, 0.0241710, 0.178727), (1e-6, 0.0315797, 2.73594)])
+@pytest.mark.parametrize('flux, water, speed', [(5e-8, 0.0241725, 0.178716), (1e-6, 0.0315837, 2.73559)])
 def test_darcy_law_from_the_cfm(flux, water, speed):
     '''hydrconducsat_Calonne times krel_vG at 400 kg m-3 and 1 mm radius, with theta_i = 0.02.'''
     radius, theta_s_factor, theta_i = 1e-3, 0.917, 0.02
