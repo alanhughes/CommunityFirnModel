@@ -81,3 +81,27 @@ For example, after a call of ``bucket``::
 
 	>>> model.melt_diagnostics['checks']['budget_2']
 	{'ok': True, 'residual': 1.7e-17, 'threshold': 1e-05}
+
+The limit of darcy at thin nodes
+================================
+
+In each sub-step, ``darcyscheme`` computes the flux at each interface as ``qlim*(1-exp(-dtsub*q0/qlim))``, from Hirashima et al. (2010). ``q0`` is the Darcy flux, which follows the permeability. ``qlim`` is the water that brings the two nodes to hydrostatic equilibrium. The sub-step gets shorter when the flux is near ``qlim``, down to **darcy_dtmin**.
+
+Where the limiter acts for a long time, the error is in the water content. Take a steady flux ``R`` through uniform firn, with each sub-step at **darcy_dtmin**. Each sub-step then moves ``R*darcy_dtmin``, and the water content rises until ``qlim`` can carry it. The water content does not follow the permeability, and the wetting front is too slow. ``qlim`` falls with the node thickness, so thinner nodes give a larger error, not a smaller one. A change of a permeability law can then have no effect on the result.
+
+For 400 kg m-3 firn and 1 mm grain radius at the default **darcy_dtmin** of 60 s, the error is more than 4 % below these node thicknesses. The values are calculated from the expression for ``qlim``, and ``test_darcy_front_speed.py`` measures the cases around them.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 50
+
+   * - Flux (m s-1)
+     - Node thickness (mm)
+   * - 5e-8
+     - 4
+   * - 5e-7
+     - 12
+   * - 1e-6
+     - 16
+
+A shorter **darcy_dtmin** moves these thicknesses down, and a run then needs more sub-steps. To see if the limit acts in a run, compare it with a run at a shorter **darcy_dtmin**.

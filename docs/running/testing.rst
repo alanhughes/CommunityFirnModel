@@ -100,6 +100,8 @@ A scheme test calls one meltwater scheme once, on a synthetic column (see `Fixtu
      - ``bucket`` and ``darcyscheme`` set the per-node refreeze: it sums to the column total and it agrees with the mass gain of each node. ``sublim`` keeps the sum when it removes nodes. The file also has ``conservation`` tests of the output of a full run, and ``unit`` tests of where the gridded output puts an amount.
    * - ``test_darcy_keys.py``
      - Each **darcy_** key reaches ``darcyscheme``. The defaults in the scheme and in the example configs are the same. The **bucket** keys do not reach the scheme.
+   * - ``test_darcy_front_speed.py``
+     - ``darcyscheme`` against the wetting front oracle, with the same flux law, for rain on dry firn at the melting temperature. The water content behind the front and the front speed agree within 4 %, and within 0.5 % for the water content with a short fixed sub-step. The water stays in the column, and the input enters at the top node. At thin nodes the sub-step stops at **darcy_dtmin** and the limiter sets the flux, so these cases are expected failures. The file shows that the limiter gives the water content there, that a shorter **darcy_dtmin** removes the error, and that 10 times the permeability follows the law at resolved nodes and has no effect at thin nodes.
    * - ``test_melt_removal.py``
      - ``bucket`` and ``darcyscheme`` shift ``bdot_mean`` and ``Dcon`` when melt removes nodes. The file also has ``unit`` tests of the warning for the schemes that ignore **keep_firnthickness** in their melt removal.
 
