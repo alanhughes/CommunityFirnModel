@@ -71,7 +71,7 @@ In ``test_hl_analytic.py``, ``test_liquid_water.py`` and ``test_densification.py
    * - ``test_solvers.py``
      - The tridiagonal solver against ``scipy.linalg.solve_banded``. ``transient_solve_TR`` against the erfc solution for a step change of temperature at the surface of a semi-infinite slab. The four meltwater solvers: energy conservation with latent heat, temperature at or below 0 °C, mass conservation, agreement with ``transient_solve_TR`` in a dry column, and the position of a refreezing front. The ``ahc`` energy and front tests are expected failures (see :doc:`../extras/meltwater_solver`).
    * - ``test_densification.py``
-     - The **physRho** laws ``HLdynamic``, ``KuipersMunneke2015`` and ``Crocus`` against the equations in Stevens et al. (2020), with both accumulation inputs: **bdot_type** ``instant`` and ``mean`` (see :doc:`json`). The tests give different values to inputs that the code can mix up: the instant and the mean accumulation rate, the values at different time steps, and the node temperature and the mean annual temperature. If the code reads the wrong input, the result changes and the test fails. ``HLdynamic``: Herron and Langway (1980). ``KuipersMunneke2015``: Arthern et al. (2010) with the Kuipers Munneke et al. (2015) multipliers, the lower limit of 0.25 on the multipliers, and the mean annual temperature in the grain-growth term (Steger et al., 2017). ``Crocus``: the viscosity of Vionnet et al. (2012), with the liquid-water factor of Verjans et al. (2019). At exactly 550 kg m-3, the code uses the zone 2 equation. Two tests record the present behaviour of the code where it differs from the papers. At 450 kg m-3 and above, ``Crocus`` uses the zone 2 rate of ``KuipersMunneke2015``. With **bdot_type** ``stress``, ``KuipersMunneke2015`` uses 10 times the node mass in place of the accumulation rate. A test that the ``stress`` rate does not depend on the node thickness is an expected failure. The property tests run every law in ``physics.py``, with **bdot_type** ``mean`` and ``instant``: the rate is not negative; the rate is finite for densities from 300 to 917 kg m-3, in layered columns and at the melting point; the rate goes to zero at the ice density; the rate increases with the temperature; a node at exactly 550 kg m-3 has a rate; each node below the ice density has a rate, unless the law stops the run; and the rate is finite with **bdot_type** ``instant`` in a time step with no accumulation. Where a law breaks a property, the test leaves out that law or that condition, and the test file gives the cause.
+     - The **physRho** laws ``HLdynamic``, ``KuipersMunneke2015`` and ``Crocus`` against the equations in Stevens et al. (2020), with both accumulation inputs: **bdot_type** ``instant`` and ``mean`` (see :doc:`json`). The tests give different values to inputs that the code can mix up: the instant and the mean accumulation rate, the values at different time steps, and the node temperature and the mean annual temperature. If the code reads the wrong input, the result changes and the test fails. ``HLdynamic``: Herron and Langway (1980). ``KuipersMunneke2015``: Arthern et al. (2010) with the Kuipers Munneke et al. (2015) multipliers, the lower limit of 0.25 on the multipliers, and the mean annual temperature in the grain-growth term (Steger et al., 2017). ``Crocus``: the viscosity of Vionnet et al. (2012), with the liquid-water factor of Verjans et al. (2019). At exactly 550 kg m-3, the code uses the zone 2 equation. Two tests record the present behaviour of the code where it differs from the papers. At 450 kg m-3 and above, ``Crocus`` uses the zone 2 rate of ``KuipersMunneke2015``. With **bdot_type** ``stress``, ``KuipersMunneke2015`` uses 10 times the node mass in place of the accumulation rate. A test that the ``stress`` rate does not depend on the node thickness is an expected failure. The property tests run each law in ``physics.py`` that a model run can use, with **bdot_type** ``mean`` and ``instant``: the rate is not negative; the rate is finite for densities from 300 to 917 kg m-3, in layered columns and at the melting point; the rate goes to zero at the ice density; the rate increases with the temperature; a node at exactly 550 kg m-3 has a rate; each node below the ice density has a rate, unless the law stops the run; and the rate is finite with **bdot_type** ``instant`` in a time step with no accumulation. Where a law breaks a property, the test leaves out that law or that condition, and the test file gives the cause.
    * - ``test_enthalpy_solver.py``
      - The ``enthalpy`` solver with liquid water in a layer below 0 °C. The solver refreezes this water with its latent heat.
    * - ``test_melt_diagnostics.py``
@@ -97,9 +97,9 @@ A scheme test calls one meltwater scheme once, on a synthetic column (see `Fixtu
    * - ``test_fixtures.py``
      - ``bucket`` closes its water budget on a synthetic column and passes all its checks in strict mode. ``darcyscheme`` runs on a synthetic column and passes its checks.
    * - ``test_refrozen.py``
-     - ``bucket`` and ``darcyscheme`` set the per-node refreeze: it sums to the column total and it agrees with the mass gain of each node. ``sublim`` keeps the sum when it removes nodes. The file also has ``conservation`` tests of the output of a full run, and ``unit`` tests of where the gridded output puts an amount.
+     - ``bucket`` and ``darcyscheme`` set the per-node refreeze, and it agrees with the mass gain of each node. For ``bucket`` it sums to the column total. For ``darcyscheme`` the sum leaves out the refreeze of nodes that melt later in the call. Melt removal and ``sublim`` keep the value of the bottom node. The file also has ``conservation`` tests of the output of a full run, and ``unit`` tests of where the gridded output puts an amount.
    * - ``test_darcy_keys.py``
-     - Each **darcy_** key reaches ``darcyscheme``. The defaults in the scheme and in the example configs are the same. The **bucket** keys do not reach the scheme.
+     - Each key of the **darcy** scheme reaches ``darcyscheme``. **ColeouLesaffre** and **IrrVal** set its irreducible water. The defaults in the scheme and in the example configs are the same. The **RhoImp**, **ThickImp** and **Slope** keys of the **bucket** scheme do not reach it.
    * - ``test_melt_removal.py``
      - ``bucket`` and ``darcyscheme`` shift ``bdot_mean`` and ``Dcon`` when melt removes nodes. The file also has ``unit`` tests of the warning for the schemes that ignore **keep_firnthickness** in their melt removal.
 
@@ -122,6 +122,39 @@ A conservation test runs the model (spin-up and ``time_evolve()``) for two years
      - A short run with **melt_strict** true completes.
    * - ``test_bucket_until_year.py``
      - **darcy**, **prefsnowpack** and **resingledomain** run **bucket** before the year in **bucket_until_year** and their own scheme from that year. With ``null``, they run their own scheme from the first step. A step exactly on the year runs their own scheme. The file also has ``unit`` tests of the example configs, the validator, the default in the code, and the message at the start of a run, which build the model and do not run it.
+
+Tests for the 4.0.0 changes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+These files test the changes made for 4.0.0. Each file contains tests of the ``unit``, ``scheme`` and ``conservation`` groups.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - File
+     - Contents
+   * - ``test_seb_top_layer.py``
+     - The thinnest-consistent-layer search of the surface energy balance (``_thicken_top_layer``) against a brute-force scan, and the choice of top layer in the quartic and Newton solvers.
+   * - ``test_seb_rain_heat.py``
+     - The heat of rain in the surface energy balance (units of W m\ :sup:`-2`, sub-daily forcing).
+   * - ``test_darcy_options.py``
+     - The per-key defaults of the **darcy** options and the one-time warning for missing keys.
+   * - ``test_grid_output_depth.py``
+     - The rule for **grid_output_max_depth** and the message when it is shallower than the domain.
+   * - ``test_model_outputs.py``, ``test_refrozen_output.py``
+     - Regridding of extensive outputs (``LWC``, ``refrozen``, ``compaction``) with conservation of the total, and the ``refrozen`` output of each scheme.
+   * - ``test_csv_sublimation.py``
+     - Sublimation from the negative values of the accumulation forcing with csv input.
+   * - ``test_compaction_and_strain.py``
+     - The ``eps_zz`` interface, the strain inputs, and the separation of densification from horizontal strain in the compaction output.
+   * - ``test_elevation_change.py``
+     - The elevation change (dH) of a run in equilibrium.
+
+Known failure
+~~~~~~~~~~~~~
+
+The **prefsnowpack** case of ``test_water_budget.py`` is marked ``xfail``. In the two-year DYE-2 test the scheme reports about 3% more refreezing plus runoff than melt plus rain, and the cause has not been found. The test reports an unexpected pass (``XPASS``) when this is fixed. See the known issues in the changelog.
 
 Fixtures for new tests
 ----------------------

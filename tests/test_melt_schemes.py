@@ -101,7 +101,7 @@ def test_darcy_input_on_an_impermeable_column_runs_off(synthetic_column):
 
 
 @pytest.mark.scheme
-@pytest.mark.parametrize('config', [{}, {'darcy_lateral_runoff': False}, {'darcy_slope': 0.0}])
+@pytest.mark.parametrize('config', [{}, {'lat_runoff_darcy': False}, {'slope_proxy_darcy': 0.0}])
 def test_darcy_input_above_the_capacity_of_the_column_runs_off(synthetic_column, config):
     # Firn on ice, with more rain than the pore space can hold and with little or no
     # lateral drainage. The water budget check stops the run if water is lost.

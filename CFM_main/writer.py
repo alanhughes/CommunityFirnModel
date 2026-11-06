@@ -39,7 +39,7 @@ def write_nospin_hdf5(self,Mout_dict,forcing_dict=None):
         elif VW == 'z':
             wn = 'depth'
         elif VW == 'age':
-            Mout_dict[VW] = Mout_dict[VW]/S_PER_YEAR
+            Mout_dict[VW][:,1:] = Mout_dict[VW][:,1:] / S_PER_YEAR
             wn = 'age'
         elif VW == 'climate':
             wn = 'Modelclimate'
@@ -273,7 +273,8 @@ def forcing_writer(self, climateTS, SEBfluxes = None):
         f6['main'].create_dataset('sde', data = climateTS['sde'])
         f6['main'].create_dataset('num_reps', data = climateTS['num_reps'])
         main_start_i = np.where(climateTS['time']>=climateTS['sds'])[0][0]
-        seb_start_i = np.where(SEBfluxes['time']>=climateTS['sds'])[0][0]
+        if SEBfluxes is not None:
+            seb_start_i = np.where(SEBfluxes['time']>=climateTS['sds'])[0][0]
     else:
         sds = False
         main_start_i = 0

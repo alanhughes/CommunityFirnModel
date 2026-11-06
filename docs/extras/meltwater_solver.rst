@@ -34,10 +34,9 @@ is a conductivity-coupling artifact rather than a property of the scheme.
    step that injected spurious energy was removed. Runs made before that change
    are **not** bit-reproducible with current CFM, and refreezing totals differ.
    Front-position accuracy is unaffected. If you need to reproduce the old
-   behavior, ``diffusion.py`` retains it as ``enthalpyDiff_old`` (calling
-   ``transient_solve_EN_old``); it is not exposed via ``meltwater_solver`` and
-   must be called directly in place of ``refreezeDiff`` in
-   ``firn_density_nospin.py``.
+   behavior, set ``"meltwater_solver": "legacy"``, which calls the retained
+   ``enthalpyDiff_old`` in ``diffusion.py`` (and ``transient_solve_EN_old`` in
+   ``solver.py``) instead of ``refreezeDiff``.
 
 The solvers
 ============
@@ -128,7 +127,7 @@ Full implementation details, caveats, and references for each solver are documen
 Solver diagnostics
 ==================
 
-Each call of a meltwater solver adds one row to ``diagnostics_<solver>.csv``. The model writes this file to the working folder at the end of the run. The column ``energy_resid`` is the energy residual of the call [J m-2]. It is the change of enthalpy in the interior cells, minus the conduction flux into them across the top face.
+Each call of ``enthalpy``, ``ahc``, ``decp`` or ``ncz`` adds one row to ``diagnostics_<solver>.csv``. The model writes this file to the working folder at the end of the run. The column ``energy_resid`` is the energy residual of the call [J m-2]. It is the change of enthalpy in the interior cells, minus the conduction flux into them across the top face.
 
 The energy residual uses the cells 1 to n-2 only:
 
