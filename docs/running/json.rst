@@ -1,19 +1,63 @@
 .. _json-page:
 
-**************************************
-The .json-formatted configuration file
-**************************************
+*************************************
+The configuration file (.json, .toml)
+*************************************
 
-The CFM uses a .json-formatted file to configure individual model runs. JSON (JavaScript Object Notation) is a data-interchange file format. It consists of a number of names, each associated with a value. Values can be strings, Booleans, integers, floats, or arrays. Comments are not allowed, but can be added by considering the comment as a name/value pair. For the CFM, it provides a file format that is both easy to read and easy to alter in order to specify parameters for a particular model run. The configuration file is passed to the CFM, and the name/value pairs are read by the model and incorporated into the model run. The file format is editable in any text editor, and the name/value pairs are given by name: value, and different name/value pairs are separated by commas.
+The CFM uses a configuration file to configure individual model runs. The file can be written in **TOML** (``.toml``) or in **JSON** (``.json``). The format is chosen from the file extension: a file that ends in ``.toml`` is read as TOML and any other file is read as JSON, so configuration files from earlier versions of the CFM work unchanged. The two formats hold the same keys with the same values, and they are used in the same way: you give the name of the file to ``main.py``, or to ``FirnDensityNoSpin`` in your own script (see :doc:`running`), and the name/value pairs are read by the model and incorporated into the model run. The file can be edited in any text editor.
 
-The specific names that are in the configuration .json file for the CFM are as follows. If any of the name/value pairs are missing, the model will generally return a message that that that name/value pair is missing and will use a default instead. For some name/value pairs the model run will fail. Note that in the .json file true/false are lowercase, but in the .py files they are True/False (first letter capitalized). The model automatically converts this. :math:`\rho_{s}` is the surface.
+TOML is the better choice for files that you write by hand, because it **allows comments**, which JSON does not. A comment can record why a value was chosen (a reference for a parameter, for example), or hold an alternative value next to the active one. ``main.py`` copies the configuration file into the results folder, so the comments are stored with the results of the run.
 
-.json keys
-~~~~~~~~~~
+File formats
+~~~~~~~~~~~~
+
+The same settings in the two formats:
+
+.. code-block:: toml
+
+    # densification physics
+    physRho = "KuipersMunneke2015"
+    MELT = true                 # include meltwater percolation and refreezing
+    liquid = "bucket"
+    RhoImp = 830                # kg m-3: density treated as ice
+    outputs = ["density", "depth", "temperature"]
+
+.. code-block:: json
+
+    {
+    "physRho": "KuipersMunneke2015",
+    "MELT": true,
+    "liquid": "bucket",
+    "RhoImp": 830,
+    "outputs": ["density", "depth", "temperature"]
+    }
+
+The differences that matter for a CFM configuration are:
+
+* **Comments.** In TOML a comment starts with ``#`` and runs to the end of the line; it can be on its own line or after a value. JSON has no comments. (A workaround used to be to add a name/value pair that holds the comment; the model ignores it, but the configuration check reports it as an unrecognized key.)
+* **Syntax.** TOML has one ``key = value`` pair on each line, with no braces and no commas. JSON is one object in braces, with ``"key": value`` pairs separated by commas.
+* **Strings** are in double quotes in both formats. **Booleans** are lower case in both (``true`` and ``false``; the model converts them to Python's ``True`` and ``False``). Lists are in square brackets, with commas, in both.
+* **Null.** TOML has no null value, so a key cannot be set to ``null``. None of the example configurations use it.
+* **Repeated keys** are an error in TOML, and a mistake in the syntax stops the model at the start with a message that gives the line. In JSON a repeated key silently takes the last value.
+
+The example configurations are ``example.json``, ``example_df.json`` and ``example_csv.json`` (the last two set up the dataframe and the csv examples; see :doc:`running`), and ``example.toml``. ``example.toml`` has the same keys and values as ``example.json``, and a comment on every key that gives its units, what it does, and which other key it depends on. The lists of allowed values for a key (the ``..._options`` entries in the JSON files, which the model does not read) are comments in the TOML file, in the line that starts with ``# options:``. A test makes sure that the two files stay the same, so you can use either as a template. To use a different template with ``run_CFM_example.py`` or your own script, change the name of the file that is loaded.
+
+TOML files are read with ``tomllib`` of the Python standard library, which needs Python 3.11 or later. The scripts that write a configuration for a run (``run_CFM_example.py`` and ``firnbatch_generic.py``) write JSON. To check a configuration file for mistakes (missing required keys, invalid values, and keys that the model does not recognize) without running the model, use
+
+.. code-block:: bash
+
+	>>> python config_validation.py example.toml
+
+The model also does this check every time that it starts. The configuration of the firn-air module (**AirConfigName**) can also be in either format.
+
+The keys
+~~~~~~~~
+
+The specific names that are in the configuration file for the CFM are as follows. If any of the name/value pairs are missing, the model will generally return a message that that name/value pair is missing and will use a default instead. For some name/value pairs the model run will fail. Note that in the configuration file true/false are lowercase, but in the .py files they are True/False (first letter capitalized). The model automatically converts this. :math:`\rho_{s}` is the surface.
 
 InputFileFolder
 ---------------
-  Directory where the input csv files are located (usually a subdirectory of the directory that contains main.py, but user can specify an absolute paths as well.) Use '' if the input files are in the same directory as main.py.
+  Directory where the input files are located: the csv files (**input_type** ``csv``) or the pickle of the climate dataframe (**input_type** ``dataframe``). It is usually a subdirectory of the directory that contains main.py, but the user can specify an absolute path as well. Use '' if the input files are in the same directory as main.py. Not used when the forcing is passed to the model directly (see :doc:`inputs`).
       
   :type: ``string``
   :example: ``inputdata``
@@ -50,7 +94,7 @@ initprofile
 input_type
 ----------
   (New in version 1.1.0)
-  Specify what type of inputs you want to use - .csv (historic behavior) or pandas dataframe that is stored in a pickle.
+  Specify what type of inputs you want to use - .csv (historic behavior) or pandas dataframe that is stored in a pickle. Read by ``main.py``. A script that passes the forcing to the model directly (as ``run_CFM_example.py`` does) does not use it. See :doc:`inputs`.
   
   :type: ``string``
   :default: ``csv``
@@ -59,7 +103,7 @@ input_type
 DFresample
 ----------
   (New in version 1.1.0)
-  Specify the resolution you want for your model run, which will be the resample interval for the dataframe (this only has functionality when input_type is ``dataframe``)
+  Specify the resolution you want for your model run, which will be the resample interval for the dataframe (this only has functionality when input_type is ``dataframe``, or when you pass it to ``makeSpinFiles`` in your own script)
   See https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.Timedelta.html
 
   :type: ``pandas Timedelta (string)``
@@ -67,21 +111,21 @@ DFresample
 
 DFfile
 ------
-  The filename of the pickle containing the climate dataframe.
+  The filename of the pickle containing the climate dataframe (relative to **InputFileFolder**). Read by ``main.py`` when **input_type** is ``dataframe``. See :doc:`inputs` for the format of the dataframe.
 
   :type: ``string``
   :example: ``example.pkl``
 
 physRho
 -------
-  The firn-densification physics to use for the model run.
+  The firn-densification physics to use for the model run. Each option, with its reference, equation, and what to know about it, is described on the :ref:`densification models page <densification-page>`.
 
   :type: ``string``
-  :Options: ``HLdynamic``, ``HLSigfus``, ``Li2004``, ``Li2011``, ``Helsen2008``, ``Arthern2010S``, ``Arthern2010T``, ``Li2015``, ``Simonsen2013``, ``Goujon2003``, ``Barnola1991``, ``Morris2014``, ``KuipersMunneke2015``, ``Brils2022``, ``Veldhuijsen2023``, ``GSFC2020``, ``Crocus``, ``Ligtenberg2011``
+  :Options: ``HLdynamic``, ``HLSigfus``, ``Li2004``, ``Li2011``, ``Helsen2008``, ``Arthern2010S``, ``Arthern2010T``, ``Li2015``, ``Simonsen2013``, ``Goujon2003``, ``Breant2017``, ``Barnola1991``, ``Morris2014``, ``KuipersMunneke2015``, ``Brils2022``, ``Veldhuijsen2023``, ``GSFC2020``, ``Crocus``, ``Ligtenberg2011``, ``MaxSP`` (experimental)
 
 MELT
 ----
-  Whether or not to include meltwater percolation physics in the model run.
+  Whether or not to include meltwater percolation physics in the model run. If **SEB** is true, **MELT** is set to true (with a warning), because the surface energy balance computes melt.
 
   :type: ``boolean``
   :default: ``False``
@@ -102,7 +146,7 @@ FirnAir
 
 AirConfigName
 -------------
-  Name of the .json configuration files that contains the parameters for the firn air module.
+  Name of the configuration file (.json or .toml) that contains the parameters for the firn air module.
 
   :type: ``string``
   :default: ``AirConfig.json``
@@ -116,7 +160,7 @@ TWriteInt
 
 TWriteStart
 -----------
-  The time at which to start saving model results. The time is model time, so must correspond to the time in the input forcing files.
+  The time at which to start saving model results. The time is model time, so must correspond to the time in the input forcing. With a reference-climate-interval spin-up the model time starts before the first date of the record (see :doc:`spinup`); set ``TWriteStart`` to the first date of the record to leave the spin-up repeats out of the output.
 
   :type: ``float``
   :Example: If your model run is from 1958 to 2018, but you only want outputs from 2000 onwards, 'TWriteStart' should be 2000.
@@ -231,7 +275,7 @@ AutoSpinUpTime
 
 yearSpin
 --------
-  How many years to spin up for. Only used when **AutoSpinUpTime** is False; if **AutoSpinUpTime** is True, the spin-up length is calculated automatically and this value is ignored. The spin up should be long enough to refresh the entire firn column at least once (i.e. long enough for a parcel deposited at the surface to advect to the bottom of the domain).
+  How many years to spin up for. Only used when **AutoSpinUpTime** is False; if **AutoSpinUpTime** is True, the spin-up length is calculated automatically and this value is ignored. For the steady-state spin-up, the spin up should be long enough to refresh the entire firn column at least once (i.e. long enough for a parcel deposited at the surface to advect to the bottom of the domain). With a reference-climate-interval spin-up the repeats of the interval do this, and ``yearSpin`` only sets the length of the first guess for the initial profile, so a small value (for example 1) is enough. See :doc:`spinup`.
 
   :type: ``float``
   :units: years
@@ -285,7 +329,7 @@ bdot_type
 
 grid_outputs
 ------------
-  Whether or not to put the outputs on a regular grid (i.e. evenly spaced vs. the internal variable grid)
+  Whether or not to put the outputs on a regular grid (i.e. evenly spaced vs. the internal variable grid). Variables that are a value of each node (density, temperature, age) are interpolated; variables that are an amount in each node (``LWC``, ``PLWC_mem``, ``refrozen``, ``compaction``) are regridded so that the sum over the grid cells is the sum over the nodes.
 
   :type: ``boolean``
   :default: ``True``
@@ -293,6 +337,14 @@ grid_outputs
 grid_output_res
 ---------------
   If grid_output is ``True``, this is the spacing of the grid nodes in meters.
+
+grid_output_max_depth
+---------------------
+  If **grid_outputs** is ``True``, the depth of the bottom of the output grid. If it is not given, it is the depth of the model domain at the start of the run. A smaller value is used as given (a message is printed). If the domain gets deeper than this during the run, the gridded outputs are cut off at this depth (a warning is printed once).
+
+  :type: ``float``
+  :default: depth of the model domain at the start of the run
+  :units: :math:`\textrm{m}`
 
   :type: ``float``
   :default: ``0.1``
@@ -321,7 +373,7 @@ spacewriteint
 
 horizontal_divergence
 ---------------------
-  Whether to include the effect of horizontal divergence (from dynamic ice-sheet/glacier flow) on the firn. When True, the mass in each layer is rescaled at each time step according to the horizontal strain rate, which thins (divergence) or thickens (convergence) the column. The strain-rate forcing is supplied via **InputFileNameStrain**.
+  Whether to include the effect of horizontal divergence (from dynamic ice-sheet/glacier flow) on the firn. When True, the mass in each layer is rescaled at each time step according to the horizontal strain rate, which thins (divergence) or thickens (convergence) the column. The strain-rate forcing can be supplied in several ways; see **InputFileNameStrain** and **strain_rate_const**.
 
   (Replaces the older ``strain`` key, which is still accepted and automatically converted.)
 
@@ -330,7 +382,7 @@ horizontal_divergence
 
 strain_softening
 ----------------
-  Whether to include strain softening in the stage-2 (power-law creep) densification regime. When True, densification rates are scaled by the effective horizontal strain rate. Requires a strain-rate forcing via **InputFileNameStrain**.
+  Whether to include strain softening in the stage-2 (power-law creep) densification regime. When True, densification rates are scaled by the effective horizontal strain rate. Requires a strain-rate forcing (see **InputFileNameStrain**); not available with single-valued (divergence-only) strain input.
 
   :type: ``boolean``
   :default: ``False``
@@ -409,14 +461,14 @@ grid2bottom
 
 spinup_climate_type
 -------------------
-  What climate to use for the spin up. 'initial' uses the very first value in the input .csv files and 'mean' uses the mean of the values in those files.
+  What climate to use for the steady-state spin up (see :doc:`spinup`). 'initial' uses the very first value of the temperature and accumulation forcing and 'mean' uses the mean of the values. With a reference-climate-interval spin-up the forcing starts with the repeated interval, so 'mean' is a mean over the whole forcing, and the result is only the first guess for the initial profile.
 
   :type: ``string``
   :options: ``initial``, ``mean``
 
 manual_climate
 --------------
-  Manually specify the background climate (long-term means). This is useful if you are doing a very short model run, in which the input csv files may not be representative of the long-term climate.
+  Manually specify the background climate (long-term means). This is useful if you are doing a very short model run, in which the input forcing may not be representative of the long-term climate.
 
   :type: ``boolean``
   :default: ``false``
@@ -455,7 +507,7 @@ QMorris
 
   :type: ``float``
   :default: ``110.0e3``
-  :units: :math:`\textrm{kJ mol}^{-1}`
+  :units: :math:`\textrm{J mol}^{-1}`
 
 timesetup
 ---------
@@ -475,18 +527,21 @@ liquid
 
 meltwater_solver
 ----------------
-  If **MELT** is true, which numerical scheme is used to solve heat diffusion with meltwater refreezing (i.e., the coupled temperature / latent-heat problem for wet firn). All four schemes solve the same physics but differ in their numerical formulation and conservation properties:
+  If **MELT** is true, which numerical scheme is used to solve heat diffusion with meltwater refreezing (i.e., the coupled temperature / latent-heat problem for wet firn). All of the schemes solve the same physics but differ in their numerical formulation and conservation properties:
 
-  - ``enthalpy`` -- solves for enthalpy directly (default); reproduces the model's prior refreezing behavior.
+  - ``enthalpy`` -- solves for enthalpy directly (default).
   - ``ahc`` -- apparent-heat-capacity method.
   - ``decp`` -- decoupled (operator-split) scheme.
   - ``ncz`` -- Newton-based scheme (Jordan-style).
+  - ``legacy`` -- the enthalpy solver as it stood before mid-July 2026, retained to reproduce older results. Provided for backward comparison only; use one of the schemes above for new work.
 
-  If the key is omitted, the model defaults to ``enthalpy``. Refreezing is dispatched through ``refreezeDiff`` in ``diffusion.py``, which calls the corresponding ``transient_solve_*`` function in ``solver.py``. Per-time-step solver diagnostics are written to ``diagnostics_<solver>.csv`` at the end of the run (see :ref:`solver-diagnostics`). See :doc:`../extras/meltwater_solver` for guidance on which scheme to choose.
+  If the key is omitted, the model defaults to ``enthalpy``. For the four current schemes, refreezing is dispatched through ``refreezeDiff`` in ``diffusion.py``, which calls the corresponding ``transient_solve_*`` function in ``solver.py``; ``legacy`` instead calls ``enthalpyDiff_old`` (``diffusion.py``) and ``transient_solve_EN_old`` (``solver.py``), bypassing ``refreezeDiff``. Per-time-step solver diagnostics are written to ``diagnostics_<solver>.csv`` at the end of the run. See :doc:`../extras/meltwater_solver` for guidance on which scheme to choose.
+
+  This key replaces the former **LWC_heat**, which selected the same thing and has been removed.
 
   :type: ``string``
   :default: ``enthalpy``
-  :options: ``enthalpy``, ``ahc``, ``decp``, ``ncz``
+  :options: ``enthalpy``, ``ahc``, ``decp``, ``ncz``, ``legacy``
 
 merging
 -------
@@ -540,14 +595,14 @@ output_bits
 
 spinUpdate
 ----------
-  Specify if you want to update the spin file at some date.
+  If True, the model saves its state (a snapshot) in the spin file every 100 years of model time and at **spinUpdateDate**. A run can then be restarted from a snapshot (set **NewSpin** to False and **spinUpdate** to True, and put the time of the snapshot in **spinUpdateDate**), either to recover a run that stopped, or to extend a run with more forcing without repeating the spin-up. See :ref:`the spin-up page <spinupdate-section>`.
 
   :type: ``boolean``
   :default: ``false``
 
 spinUpdateDate
 --------------
-  Specify the date at which to update the spin file. should correspond to the start of your reference climate interval.
+  The date of the last snapshot that is saved in the spin file, which should be the end of the spin-up, i.e. the first date of the record, which is the start of your reference climate interval. When restarting a run (**spinUpdate** True and **NewSpin** False) it is the date of the snapshot to restart from: the snapshot closest to it is used. See :ref:`the spin-up page <spinupdate-section>`.
 
   :type: ``float``
   :default: ``1980.0``
@@ -561,7 +616,7 @@ DIPhorizon
 
 NewSpin
 -------
-  Whether or not to perform a new spin up (if the spin file exists already.)
+  Whether or not to make a new initial profile with ``FirnDensitySpin`` (if the spin file exists already; if there is none, a new one is always made). If False and a spin file exists in **resultsFolder**, the model starts from it. ``main.py`` sets it to True with the option ``-n``. See :doc:`spinup`.
 
   :type: ``boolean``
   :default: ``false``
@@ -622,10 +677,28 @@ InputFileNamerho
 
 InputFileNameStrain
 -------------------
-  Horizontal strain-rate forcing, used when **horizontal_divergence** or **strain_softening** is True. The file may contain one column (divergence), two columns (the two principal strain rates), or three columns (:math:`\dot\epsilon_{xx}`, :math:`\dot\epsilon_{yy}`, :math:`\dot\epsilon_{xy}`). Replaces the deprecated ``InputFileNamedudx`` (still accepted and auto-converted).
+  Horizontal strain-rate forcing, used when **horizontal_divergence** or **strain_softening** is True. The file has the time (decimal years) in the first row, followed by one row (divergence), two rows (the two principal strain rates), or three rows (:math:`\dot\epsilon_{xx}`, :math:`\dot\epsilon_{yy}`, :math:`\dot\epsilon_{xy}`), in :math:`\textrm{yr}^{-1}`. Replaces the deprecated ``InputFileNamedudx`` (still accepted and auto-converted).
+
+  The csv file is used only if no other strain source is found. In order of priority the sources are:
+
+  1. the ``strain_rates`` argument to ``FirnDensityNoSpin``: a number (constant divergence), a list of 2 or 3 numbers (constant principal rates, or :math:`\dot\epsilon_{xx}`, :math:`\dot\epsilon_{yy}`, :math:`\dot\epsilon_{xy}`), or a dictionary with ``time`` plus either ``eps`` (1-D divergence, or 2xN / 3xN components) or named arrays;
+  2. strain keys in ``climateTS`` (the same format as the other climate forcing, on the same time axis): ``eps_divergence``, or ``eps_1`` and ``eps_2``, or ``eps_xx``, ``eps_yy`` and ``eps_xy``. When the forcing comes from a dataframe, these can simply be columns of the dataframe passed to ``makeSpinFiles`` (resampled by their mean);
+  3. **strain_rate_const**;
+  4. this csv file.
 
   :type: ``string``
   :Example: ``example_STRAIN.csv``
+
+strain_rate_const
+-----------------
+  A constant horizontal strain rate, used when **horizontal_divergence** or **strain_softening** is True and no strain forcing is passed in directly or in ``climateTS``. Units are :math:`\textrm{yr}^{-1}`, extension positive. Like the csv file, it can be a single number, a list of two numbers, or a list of three numbers:
+
+  * one number: the quantity :math:`-(\dot\epsilon_{xx}+\dot\epsilon_{yy})` (named ``eps_divergence`` in the code), applied directly to the layer mass each time step, so a **positive** value thickens the column (horizontal convergence) and a **negative** value thins it (horizontal divergence). Strain softening is switched off for this single-valued form;
+  * two numbers: the principal horizontal strain rates :math:`\dot\epsilon_{1}`, :math:`\dot\epsilon_{2}`;
+  * three numbers: :math:`\dot\epsilon_{xx}`, :math:`\dot\epsilon_{yy}`, :math:`\dot\epsilon_{xy}`.
+
+  :type: ``float`` or ``list of floats``
+  :Example: ``-1.0e-4`` or ``[1.0e-4, 2.0e-4, 0.0]``
 
 ManualTFilename
 ---------------
@@ -645,7 +718,7 @@ Surface energy balance (SEB)
 
 SEB
 ---
-  Whether to run the surface-energy-balance module, which computes surface temperature and melt from energy fluxes rather than using a prescribed melt forcing. When True, melt is calculated internally within the time-stepping loop and **InputFileNamemelt** is not needed.
+  Whether to run the surface-energy-balance module, which computes surface temperature and melt from energy fluxes rather than using a prescribed melt forcing. When True, melt is calculated internally within the time-stepping loop and **InputFileNamemelt** is not needed. See the :ref:`surface energy balance page <seb-page>` for how it works, the required forcing, and its limitations. The turbulent fluxes ``QH`` and ``QL`` of the forcing must be positive **into the snow** (MERRA-2 fluxes must be multiplied by -1; see :ref:`sign-conventions`).
 
   :type: ``boolean``
   :default: ``false``
@@ -664,6 +737,82 @@ albedo_factor
 
   :type: ``float``
   :default: ``1``
+
+SEB_turb_method
+----------------
+  Which parameterization computes the turbulent (sensible + latent) heat fluxes within the SEB module. ``prescribed`` takes QH/QL directly from the climate forcing (the original, non-iterative behavior); ``bulk_richardson`` and ``monin_obukhov`` instead compute them from wind speed, humidity, and surface pressure, iterating with the surface temperature. An unrecognized value raises an error. Only used when **SEB** is True.
+
+  ``bulk_richardson`` and ``monin_obukhov`` require three extra forcing variables, which must be supplied alongside the other SEB forcing (as columns of the forcing dataframe passed to ``makeSpinFiles``, or as keys of ``climateTS``/``SEBfluxes``). The model stops at startup with a message naming any that are missing:
+
+  * ``WS`` -- wind speed at height **SEB_z_ref_wind** (m/s)
+  * ``QV2m`` -- specific humidity at height **SEB_z_ref_q** (kg/kg); the air temperature is the forcing ``T2m``, at **SEB_z_ref_T**
+  * ``PS`` -- surface pressure (Pa)
+
+  Time-varying roughness lengths can optionally be supplied as ``z0m``, ``z0h``, and ``z0q`` (m); these take priority over the **SEB_z0m**/**SEB_z0h**/**SEB_z0q** keys. With MERRA-2 forcing, ``WS`` is the 2-m wind speed, ``sqrt(U2M**2 + V2M**2)``, which matches the default 2-m reference heights.
+
+  Both Ts-dependent schemes work with SEB forcing that is finer than the model time step (for example 4-hourly fluxes with a daily model step): the surface temperature is solved for each sub-step by Newton's method and the melt is summed. They are slower than ``prescribed`` (``monin_obukhov`` roughly 2.5 times slower in tests). Because the fluxes respond to the modeled surface temperature they give different melt than ``prescribed``: at DYE-2 (1980-1999, MERRA-2) about 16% less.
+
+  :type: ``string``
+  :default: ``prescribed``
+  :options: ``prescribed``, ``bulk_richardson``, ``monin_obukhov``
+
+SEB_roughness_mode
+-------------------
+  How the aerodynamic roughness lengths (**SEB_z0m**, **SEB_z0h**, **SEB_z0q**) are determined when not supplied directly by the forcing data. ``fixed`` uses the configured/default values; ``parameterized`` derives z0h and z0q from z0m and the friction velocity via the Andreas (1987) relation. Inert when **SEB_turb_method** is ``prescribed``.
+
+  The turbulent fluxes are sensitive to this choice. In tests at DYE-2 against MERRA-2's own diagnosed sensible and latent heat fluxes (2-m inputs), ``parameterized`` with **SEB_z0m** = ``1.0e-3`` reproduced them to within about 5% (regression slope 1.04-1.07), as did ``fixed`` with **SEB_z0m** = ``1.0e-3`` and **SEB_z0h** = **SEB_z0q** = ``1.0e-5``. Using MERRA-2's own roughness values (``Z0M`` = 5e-3, ``Z0H`` = 1e-3) as fixed values gave about twice MERRA-2's fluxes. The default (``fixed``, z0h = z0q = z0m = 1e-3) is therefore likely to overestimate turbulent exchange over a stable ice-sheet surface; consider ``parameterized``.
+
+  :type: ``string``
+  :default: ``fixed``
+  :options: ``fixed``, ``parameterized``
+
+SEB_z0m
+-------
+  Momentum roughness length, used as a fallback when not supplied by the forcing data. Inert when **SEB_turb_method** is ``prescribed``.
+
+  :type: ``float``
+  :default: ``1.0e-3``
+  :units: :math:`\textrm{m}`
+
+SEB_z0h
+-------
+  Roughness length for heat, used as a fallback when not supplied by the forcing data. Inert when **SEB_turb_method** is ``prescribed``.
+
+  :type: ``float``
+  :default: value of **SEB_z0m**
+  :units: :math:`\textrm{m}`
+
+SEB_z0q
+-------
+  Roughness length for humidity, used as a fallback when not supplied by the forcing data. Inert when **SEB_turb_method** is ``prescribed``.
+
+  :type: ``float``
+  :default: value of **SEB_z0m**
+  :units: :math:`\textrm{m}`
+
+SEB_z_ref_wind
+--------------
+  Measurement height of the wind-speed forcing above the surface. Inert when **SEB_turb_method** is ``prescribed``.
+
+  :type: ``float``
+  :default: ``2.0``
+  :units: :math:`\textrm{m}`
+
+SEB_z_ref_T
+-----------
+  Measurement height of the air-temperature forcing above the surface. Inert when **SEB_turb_method** is ``prescribed``.
+
+  :type: ``float``
+  :default: ``2.0``
+  :units: :math:`\textrm{m}`
+
+SEB_z_ref_q
+-----------
+  Measurement height of the humidity forcing above the surface. Inert when **SEB_turb_method** is ``prescribed``.
+
+  :type: ``float``
+  :default: ``2.0``
+  :units: :math:`\textrm{m}`
 
 Melt, liquid water, and runoff
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -701,7 +850,22 @@ RhoImp
 
 ThickImp
 --------
-  Minimum thickness for an ice lens (density :math:`\geq` **RhoImp**) to be treated as impermeable. Set to 0 to make every ice layer impermeable. Used only when **DownToIce** is False. This key controls the **bucket** scheme and not the ``darcyscheme`` function, which reads **darcy_ThickImp**. So a comparison of the two schemes must set both keys.
+  Minimum thickness for an ice lens (density :math:`\geq` **RhoImp**) to be treated as impermeable. Set to 0 to make every ice layer impermeable. Used only when **DownToIce** is False and **LeakyLenses** is False (bucket scheme).
+
+  :type: ``float``
+  :default: ``0.1``
+  :units: :math:`\textrm{m}`
+
+LeakyLenses
+-----------
+  If True, ice lenses are partially permeable instead of either blocking or not blocking depending on **ThickImp**. Each layer with density :math:`\geq` **RhoImp** passes on a fraction :math:`\exp(-\Delta z/L)` of the water reaching it, where :math:`\Delta z` is the layer thickness and :math:`L` is **LensDecayLength**, so a lens of total thickness :math:`D` passes :math:`\exp(-D/L)` however many layers it consists of. Water that is not passed on is blocked and handled by **Ponding**/**DirectRunoff** as usual. **ThickImp** is not used. Only used by the bucket scheme (``liquid``: ``bucket``) and when **DownToIce** is False. A similar parameterization (percolation efficiency decreasing exponentially with ice layer thickness) is used in FirnPerc (van de Berg, EGU General Assembly 2026, EGU26-7173). Contributed by Aslak Grinsted.
+
+  :type: ``boolean``
+  :default: ``false``
+
+LensDecayLength
+---------------
+  E-folding ice thickness of the water transmission through ice lenses when **LeakyLenses** is True. Small values approach **ThickImp** = 0 (every ice layer blocks); large values approach **DownToIce** = True (lenses do not block).
 
   :type: ``float``
   :default: ``0.1``
@@ -819,6 +983,21 @@ melt_strict
   :type: ``boolean``
   :default: ``false``
 
+IceMeltFactor
+-------------
+  Factor by which the melt forcing is multiplied at time steps when the surface is bare ice. Melt forcing computed with a degree-day model usually uses a snow degree-day factor, but bare ice has a lower albedo than snow and melts faster; set this to the ratio of the ice and snow degree-day factors (for example 1.27) to correct for it. The surface counts as bare ice when the density of the top model node is greater than **IceMeltRho**. The node is the surface left by the previous time step, so a layer of fresh snow on top of ice (which makes the top node low density) turns the enhancement off. The scaled melt is what the percolation scheme uses and what is written to the ``climate`` output and to the forcing record. The default of 1 leaves the melt unchanged. Not used when **SEB** is True (the surface energy balance uses the albedo, so darker ice is already accounted for), or when **MELT** is False. Applies to the transient run only, not to the spin-up (initial condition) calculation.
+
+  :type: ``float``
+  :default: ``1``
+
+IceMeltRho
+----------
+  Density of the top model node above which the surface is treated as bare ice for **IceMeltFactor**. Used only when **IceMeltFactor** is not 1.
+
+  :type: ``float``
+  :default: ``800``
+  :units: :math:`\textrm{kg m}^{-3}`
+
 keep_firnthickness
 ------------------
   Controls grid behavior when melt removes surface layers. If True, the domain thickness is maintained by adding nodes at the base; if False, the original layer thicknesses are kept.
@@ -830,17 +1009,109 @@ keep_firnthickness
 
 LWC_heat
 --------
-  **Deprecated.** Formerly selected the method for handling the latent heat of liquid water during heat diffusion. The choice of refreezing scheme is now made with **meltwater_solver** (see above); only the ``enthalpy`` path remains active, and the ``highC`` / ``Teff`` / ``LWCcorr`` branches have been retired. If present in a config it is forced to ``enthalpy`` internally and otherwise ignored. The related internal flags ``LWCheat``, ``LWCcorr_subdt``, and ``correct_therm_prop`` are likewise inactive and kept only for backward compatibility.
+  **Deprecated -- replaced by meltwater_solver.** This key formerly selected the method for handling the latent heat of liquid water during heat diffusion, duplicating the job of **meltwater_solver** (see above). Use **meltwater_solver** instead; the ``highC`` / ``Teff`` / ``LWCcorr`` branches have been retired.
+
+  For backward compatibility, a config that still contains ``LWC_heat`` is handled as follows, with a warning printed either way:
+
+  - ``LWC_heat`` present and **meltwater_solver** absent: the run uses ``meltwater_solver = legacy``. Such a config predates the rename, and therefore also predates the 2026-08 change to the ``enthalpy`` solver, so falling back to ``legacy`` reproduces the numerics the config was written against rather than silently substituting a different scheme. If the ``LWC_heat`` value was one of the retired options, an additional warning notes that ``legacy`` is the old ``enthalpy`` scheme and not a like-for-like replacement.
+  - Both keys present: ``LWC_heat`` is ignored and **meltwater_solver** governs.
+
+  Remove ``LWC_heat`` from your configuration file to silence the warnings. The related internal flags ``LWCheat``, ``LWCcorr_subdt``, and ``correct_therm_prop`` are likewise inactive and kept only for backward compatibility.
+
+debug_bucket
+------------
+  If True, prints extra diagnostic output from the bucket percolation scheme at each time step. Only used when **liquid** is ``bucket``.
+
+  :type: ``boolean``
+  :default: ``false``
+
+These keys configure the Darcy percolation scheme (**liquid** = ``darcy``). **ColeouLesaffre** and **IrrVal** (above) are also read by this scheme.
+
+dtmin_darcy
+-----------
+  Minimum internal time step the Darcy routine's adaptive sub-stepping may shrink to.
+
+  :type: ``float``
+  :default: ``60``
+  :units: :math:`\textrm{s}`
+
+dtmax_darcy
+-----------
+  Maximum internal time step the Darcy routine's adaptive sub-stepping may grow to.
+
+  :type: ``float``
+  :default: ``3600``
+  :units: :math:`\textrm{s}`
+
+dtsub_darcy
+-----------
+  Starting internal time step for the Darcy routine, before adaptive sub-stepping adjusts it.
+
+  :type: ``float``
+  :default: ``60``
+  :units: :math:`\textrm{s}`
+
+RhoImp_darcy
+------------
+  Density at or above which a layer is treated as an impermeable ice lens, for the Darcy scheme. Analogous to **RhoImp**, but set independently -- the Darcy scheme does not read **RhoImp**.
+
+  :type: ``float``
+  :default: ``873``
+  :units: :math:`\textrm{kg m}^{-3}`
+
+ThickImp_darcy
+--------------
+  Minimum thickness for an ice lens (density :math:`\geq` **RhoImp_darcy**) to be treated as impermeable, for the Darcy scheme. Analogous to **ThickImp**.
+
+  :type: ``float``
+  :default: ``0.5``
+  :units: :math:`\textrm{m}`
+
+lat_runoff_darcy
+----------------
+  Whether to compute lateral runoff for water that accumulates above an impermeable barrier with no further downward path.
+
+  :type: ``boolean``
+  :default: ``true``
+
+slope_proxy_darcy
+------------------
+  Surface slope used as the hydraulic gradient driving lateral runoff when **lat_runoff_darcy** is True.
+
+  :type: ``float``
+  :default: ``0.02``
+  :units: :math:`\textrm{m/m}`
+
+rholim_dcy
+----------
+  Density cap applied when computing Darcy flow: node density is capped at this value so that lenses near ice density retain some residual permeability rather than being treated as fully solid. Must be greater than **RhoImp_darcy**; the model exits if it is not.
+
+  :type: ``float``
+  :default: ``910``
+  :units: :math:`\textrm{kg m}^{-3}`
+
+eps_cvg_darcy
+-------------
+  Convergence tolerance for the equilibrium-head solve of the flux between two nodes (bisection and Newton-Raphson).
+
+  :type: ``float``
+  :default: ``0.1e-3``
+  :units: :math:`\textrm{m}`
+
+runoff_method_darcy
+--------------------
+  Parameterization used for lateral runoff in the Darcy scheme. An unrecognized value causes the model to exit.
 
   :type: ``string``
-  :default: ``enthalpy``
+  :default: ``Darcy``
+  :options: ``ZuoOerlemans``, ``Darcy``
 
 Sublimation
 ~~~~~~~~~~~
 
 SUBLIM
 ------
-  Whether to include sublimation/deposition. When False, negative values in the accumulation forcing (interpreted as sublimation) are set to zero.
+  Whether to include sublimation/deposition. When False, negative values in the accumulation forcing (interpreted as sublimation) are set to zero. With **SEB** true and **SEB_turb_method** ``bulk_richardson`` or ``monin_obukhov``, the sublimation is not taken from the forcing but calculated from the latent heat flux of the surface energy balance (the forcing ``SUBLIM`` is then only a first estimate for **iceout**), so it has to be true in that case.
 
   :type: ``boolean``
   :default: ``true``
@@ -854,14 +1125,6 @@ bdm_sublim
 
 Densification and thermal options
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-MQ
---
-  Activation energy for the Morris and Wingham (2014) densification model. Only used when **physRho** is ``Morris2014``.
-
-  :type: ``float``
-  :default: ``60``
-  :units: :math:`\textrm{kJ mol}^{-1}`
 
 THist
 -----
@@ -907,6 +1170,87 @@ iceblock_rho
   :default: ``917``
   :units: :math:`\textrm{kg m}^{-3}`
 
+Firn air
+~~~~~~~~
+
+The firn air module is turned on with **FirnAir** (above) and configured by a second configuration file (.json or .toml), named by **AirConfigName** (``AirConfig.json`` is an example). The keys below are read from that file, not from the main configuration file. Unlike the main file, there are no defaults: a missing key raises a ``KeyError``. Other entries in ``AirConfig.json`` (``StepsPerYear``, ``z_resolution``, ``UserData``, and the ``*_options`` arrays) are not read by the model. For a description of the physics, see the docstring at the top of ``firn_air.py``.
+
+gaschoice
+---------
+  List of gases to model; one firn air instance is run per gas. ``d15N2`` and ``d40Ar`` are isotope ratios and use a constant surface value of 1, so they evolve only through fractionation. Every other gas needs a surface history file named ``<gas>.csv`` in **InputFileFolder**. A gas that is not implemented in ``firn_air.py`` (function ``gasses``) stops the model with an error listing the available gases.
+
+  :type: ``list of strings``
+  :Options: ``CO2``, ``CH4``, ``d15N2``, ``d40Ar``, ``SF6``, ``C14``, ``C13``, ``CFC11``, ``CFC12``, ``C13_CFC12``, ``CC14``, ``CFC113``, ``CFC115``, ``R134a``, ``CH3CCl3``, ``HCFC22``, ``C13_CH4``, ``FOG``
+
+gravity
+-------
+  Whether to include gravitational fractionation.
+
+  :type: ``string``
+  :Options: ``on``, ``off``
+
+thermal
+-------
+  Whether to include thermal fractionation. Requires **gravity** to be ``on``; ``thermal: on`` with ``gravity: off`` stops the model.
+
+  :type: ``string``
+  :Options: ``on``, ``off``
+
+runtype
+-------
+  ``transient`` runs the gas model alongside the transient firn model. ``steady`` uses **steady_T** and **steady_bdot** for the close-off density, the diffusivity temperature, and the accumulation rate, and the model automatically switches to the ``HLdynamic`` densification physics with instantaneous accumulation.
+
+  :type: ``string``
+  :Options: ``transient``, ``steady``
+
+steady_T
+--------
+  Temperature used in a ``steady`` run. Required in the file, but only used when **runtype** is ``steady``.
+
+  :type: ``float``
+  :units: K
+
+steady_bdot
+-----------
+  Accumulation rate used in a ``steady`` run. Required in the file, but only used when **runtype** is ``steady``.
+
+  :type: ``float``
+  :units: :math:`\textrm{m ice eq. yr}^{-1}`
+
+Diffu_param
+-----------
+  Parameterization for the effective diffusivity of the gas in firn.
+
+  :type: ``string``
+  :Options: ``Severinghaus``, ``Schwander``, ``Freitag``, ``Adolph``, ``Witrant``, ``Battle``. (A seventh option, ``Christo``, reads a data file from a hardcoded path and is not usable without editing ``firn_air.py``.)
+
+lockin
+------
+  If true, a lock-in zone is included: between the lock-in depth and the close-off depth the diffusion is carried by an eddy diffusivity set equal to the molecular value at the lock-in depth, and the molecular diffusivity below the lock-in depth is set to essentially zero. If false, diffusivity is cut off at the close-off density and there is no lock-in zone.
+
+  :type: ``boolean``
+
+ConvectiveZoneDepth
+-------------------
+  E-folding depth of the near-surface eddy diffusivity (convective zone), which has a surface value of :math:`2.4\times10^{-5}\textrm{ m}^2\textrm{ s}^{-1}` (Kawamura et al., 2006).
+
+  :type: ``float``
+  :units: m
+
+advection_type
+--------------
+  How the air velocity relative to the firn is calculated. ``zero`` neglects advection; ``Darcy`` computes it from the air-pressure gradient caused by changes in open pore volume with a Darcy-law permeability; ``Christo`` uses the closed-porosity formulation from Buizert's thesis.
+
+  :type: ``string``
+  :Options: ``zero``, ``Darcy``, ``Christo``
+
+outputs
+-------
+  Firn air fields written to the results file, in addition to the concentration of each gas in **gaschoice** (written under the gas name). ``gasses`` is the concentration profiles, ``air_advection_rate`` is written as ``w_air`` and ``firn_advection_rate`` as ``w_firn``.
+
+  :type: ``list of strings``
+  :Options: ``gasses``, ``diffusivity``, ``air_advection_rate``, ``firn_advection_rate``, ``gas_age``
+
 Outputs and run metadata
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -945,20 +1289,31 @@ lat_int / lon_int
   :type: ``float``
   :units: degrees
 
+Deprecated, inactive and bookkeeping keys
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+The configuration checker (``config_validation.py``) accepts the following keys without a warning about "unrecognized key". Most of them do nothing in the current code; they are listed so that you know that you can remove them.
 
+strain
+------
+  **Deprecated.** The former name of **horizontal_divergence**. A configuration that still has it is converted, and a deprecation message is printed. If both keys are present, **horizontal_divergence** is used.
 
+InputFileNamedudx
+-----------------
+  **Deprecated.** The former name of **InputFileNameStrain**; it is converted, with a deprecation message. If both are present, **InputFileNameStrain** is used.
 
+LWCheat / LWCcorr_subdt / correct_therm_prop
+--------------------------------------------
+  Inactive. Flags from before the introduction of **meltwater_solver** (see **LWC_heat** above). ``LWCheat`` is set by the model itself (``enthalpy``) and is not read from the configuration file. Remove them.
 
+LWCcorrect / meltwater_solver_options
+-------------------------------------
+  Accepted by the checker but not read by the current code. Choose the treatment of liquid water in the heat equation with **meltwater_solver**.
 
+runid
+-----
+  A lower-case duplicate of **runID**. The model does not read it; use **runID**.
 
-
-
-
-
-
-
-
-
-
-
+x_val / y_val / x_int / y_int / quad / runloc / resultspath
+-----------------------------------------------------------
+  Site and run bookkeeping that run scripts can add to the configuration (grid-cell coordinates and indices, a quadrant or tile label, where the run was made, and the path of the results). The model does not read them; they are accepted so that the checker does not report them as typos, and they stay in the configuration copy that is saved with the results, which is useful for keeping track of runs.

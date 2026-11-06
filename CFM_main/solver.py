@@ -423,6 +423,12 @@ def transient_solve_TR(z_edges, Z_P, dt, Gamma_P, phi_0, nz_P, phi_s, c_vol, air
         f_d = 1 - (z_edges[1:] - Z_P) / deltaZ_d
         Gamma_Po    = Gamma_P * airdict['por_op'] #This is the diffusivity times the open porosity.
 
+        # Face-interpolation weights (as in _fv_geometry, which does not return them).
+        # Needed because the gas path re-computes Gamma_u/Gamma_d with the open-porosity-
+        # weighted diffusivity. Missing since the _fv_geometry refactor (NameError on f_u).
+        f_u         = 1 - (Z_P - z_edges[:-1]) / deltaZ_u
+        f_d         = 1 - (z_edges[1:] - Z_P) / deltaZ_d
+
         Gamma_U     = np.append(Gamma_Po[0], Gamma_Po[0: -1] )
         Gamma_D     = np.append(Gamma_Po[1:], Gamma_Po[-1])
         Gamma_u     =  1 / ((1 - f_u) / Gamma_Po + f_u / Gamma_U) #Patankar Eq. 4.11
@@ -1677,9 +1683,17 @@ def transient_solve_EN_old(z_edges, Z_P, nt, dt, Gamma_P, phi_0, nz_P, nz_fv, ph
     Legacy enthalpy-based refreezing solver (renamed from transient_solve_EN).
 
     Retained specifically for testing/comparison against transient_solve_enthalpy
-    and the other current refreezing solvers; not used in the main CFM pipeline
-    as of mid-July 2026 (see enthalpyDiff_old in diffusion.py for the
-    corresponding legacy call site). Uses Picard iteration with an explicit
+    and the other current refreezing solvers, and to exactly reproduce
+    MC_2609's enthalpyDiff/transient_solve_EN numerics; not used by default,
+    but reachable via config key "meltwater_solver": "legacy" (see
+    enthalpyDiff_old in diffusion.py for the corresponding legacy call site).
+    # claude, 26/09/10: previously unreachable from any config option and
+    # would have crashed on call (enthalpyDiff_old had a NameError on tot_rho,
+    # and wasn't importing this function) -- both fixed in diffusion.py, and
+    # this function is now wired up via firn_density_nospin.py's
+    # meltwater_solver dispatch (26/09/11: was the now-removed "LWC_heat" key).
+
+    Uses Picard iteration with an explicit
     liquid-fraction overshoot correction (0.6 relaxation factor), similar in
     spirit to transient_solve_enthalpy but with a different internal
     bookkeeping approach (tracks g_liq/g_sol volume fractions and H_tot

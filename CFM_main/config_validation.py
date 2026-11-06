@@ -29,7 +29,6 @@ This module uses only the standard library so it can be imported anywhere
 without creating circular imports.
 '''
 
-import json
 import sys
 
 
@@ -65,7 +64,7 @@ ALLOWED_VALUES = {
         'Helsen2008', 'Arthern2010S', 'Arthern2010T', 'Simonsen2013',
         'Ligtenberg2011', 'Barnola1991', 'Morris2014', 'KuipersMunneke2015',
         'Brils2022', 'Veldhuijsen2023', 'Goujon2003', 'Breant2017',
-        'Crocus', 'GSFC2020',
+        'Crocus', 'GSFC2020', 'MaxSP',
     },
     'bdot_type': {'instant', 'mean', 'stress'},
     'conductivity': {
@@ -93,7 +92,7 @@ ALLOWED_VALUES = {
         'refrozen', 'meltoutputs',
     },
     'iso': {'d18O', 'dD', 'NoDiffusion'},
-    'meltwater_solver': {'enthalpy', 'ahc', 'decp', 'ncz'},
+    'meltwater_solver': {'enthalpy', 'ahc', 'decp', 'ncz', 'legacy'},
 }
 
 # Keys that hold lists whose elements are validated against ALLOWED_VALUES.
@@ -101,6 +100,19 @@ LIST_VALUED_KEYS = {'outputs', 'iso'}
 
 # The 'liquid' schemes whose melt removal does not read 'keep_firnthickness'.
 LIQUID_IGNORES_KEEP_FIRNTHICKNESS = {'darcy', 'resingledomain', 'prefsnowpack'}
+
+
+# Keys the model no longer reads, mapped to the message shown when one is
+# found. These are recognized (so they are not reported as typos) but flagged,
+# because silently ignoring them can change the physics of a run. Handling of
+# the value itself lives at the point of use -- e.g. FirnDensityNoSpin.__init__
+# migrates a lone 'LWC_heat' onto meltwater_solver='legacy'.
+# claude, 26/09/11
+DEPRECATED_KEYS = {
+    'LWC_heat': ("replaced by 'meltwater_solver'; if 'meltwater_solver' is "
+                 "absent the run falls back to the 'legacy' solver to "
+                 "reproduce the old numerics, otherwise 'LWC_heat' is ignored"),
+}
 
 
 # Every configuration key the model recognizes. Used only to warn about
@@ -126,7 +138,7 @@ KNOWN_KEYS = {
     # grain size
     'physGrain', 'calcGrainSize', 'GrGrowPhysics', 'r2s0',
     # heat
-    'heatDiff', 'conductivity', 'LWC_heat', 'LWCheat', 'LWCcorr_subdt',
+    'heatDiff', 'conductivity', 'LWCheat', 'LWCcorr_subdt',
     'correct_therm_prop',
     # surface density
     'variable_srho', 'srho_type', 'rhos0',
@@ -134,33 +146,37 @@ KNOWN_KEYS = {
     'AutoSpinUpTime', 'yearSpin', 'stpsPerYear', 'stpsPerYearSpin',
     'H', 'HbaseSpin', 'D_surf', 'bdot_type', 'iceblock', 'iceblock_rho',
     # outputs / grid
-    'grid_outputs', 'grid_output_res', 'isoDiff', 'iso', 'spacewriteint',
+    'grid_outputs', 'grid_output_res', 'grid_output_max_depth', 'isoDiff', 'iso', 'spacewriteint',
     'outputs', 'output_bits', 'truncate_outputs',
     'doublegrid', 'nodestocombine', 'multnodestocombine', 'grid1bottom',
     'grid2bottom',
     # strain / divergence
-    'strain', 'horizontal_divergence', 'strain_softening', 'residual_strain',
+    'strain', 'horizontal_divergence', 'strain_softening', 'residual_strain', 'strain_rate_const',
     'tuning_bias_correction', 'InputFileNamedudx',
     # climate
     'spinup_climate_type', 'manual_climate', 'deepT', 'bdot_long',
-    'manual_iceout', 'iceout', 'QMorris', 'MQ', 'THist',
+    'manual_iceout', 'iceout', 'QMorris', 'THist',
     # melt / liquid water
     'liquid', 'merging', 'merge_min', 'LWCcorrect', 'ColeouLesaffre',
-    'IrrVal', 'RhoImp', 'ThickImp', 'DownToIce', 'Ponding', 'DirectRunoff',
+    'IrrVal', 'RhoImp', 'ThickImp', 'LeakyLenses', 'LensDecayLength', 'DownToIce', 'Ponding', 'DirectRunoff',
     'RunoffZuoOerlemans', 'Slope', 'melt_strict', 'keep_firnthickness', 'meltwater_solver', 'meltwater_solver_options',
-    'darcy_RhoImp', 'darcy_ThickImp', 'darcy_lateral_runoff', 'darcy_slope',
-    'darcy_rho_cap', 'darcy_dtmin', 'darcy_dtmax', 'darcy_theta_s_factor',
-    'darcy_theta_irreducible',
     'bucket_until_year',
+    'debug_bucket', 'IceMeltFactor', 'IceMeltRho',
+    # darcy
+    'dtmin_darcy', 'dtmax_darcy', 'dtsub_darcy', 'RhoImp_darcy', 'ThickImp_darcy',
+    'lat_runoff_darcy', 'slope_proxy_darcy', 'rholim_dcy', 'eps_cvg_darcy',
+    'runoff_method_darcy', 'theta_s_factor_darcy',
     # SEB
     'SEB', 'SEB_TL_thick', 'albedo_factor',
+    'SEB_turb_method', 'SEB_roughness_mode', 'SEB_z0m', 'SEB_z0h', 'SEB_z0q',
+    'SEB_z_ref_wind', 'SEB_z_ref_T', 'SEB_z_ref_q',
     # stage zero snow
     'stage_zero', 'snow_model', 's_zero_rho',
     # misc / measurement
     'manualT', 'no_densification', 'rad_pen', 'site_pressure',
     'spinUpdate', 'spinUpdateDate', 'DIPhorizon', 'NewSpin',
     # run metadata / site (injected by run scripts)
-    'runID', 'lat_int', 'lon_int', 'lat_val', 'lon_val',
+    'runID', 'lat_int', 'lon_int', 'lat_val', 'lon_val', 'runid', 'x_val', 'y_val', 'runloc', 'quad', 'x_int', 'y_int', 'resultspath'
 }
 
 
@@ -212,6 +228,10 @@ def validate_config(c, config_path=None):
     ConfigValidationError (once, listing every problem found) if any required
     key is missing, a conditional requirement is unmet, or an option value is
     invalid. Returns None when the configuration is valid.
+
+    One setting is corrected in place: if 'SEB' is true and 'MELT' is false,
+    'MELT' is set to true (with a warning), because the surface energy balance
+    computes melt.
     '''
     errors = []
     warnings = []
@@ -251,16 +271,54 @@ def validate_config(c, config_path=None):
                     "invalid value {!r} for '{}'; allowed values are: {}"
                     .format(value, key, allowed_str))
 
-    # 5. Unknown keys -> warnings only.
+    # 5. Deprecated and unknown keys -> warnings only.
+    # claude, 26/09/11: deprecated keys are checked first so they are not
+    # mislabeled as typos.
     for key in c:
         if _is_helper_key(key):
             continue
-        if key not in KNOWN_KEYS:
+        if key in DEPRECATED_KEYS:
+            warnings.append(
+                "deprecated key '{}': {}".format(key, DEPRECATED_KEYS[key]))
+        elif key not in KNOWN_KEYS:
             warnings.append(
                 "unrecognized key '{}' (possible typo?); it will be ignored"
                 .format(key))
 
-    # 6. A key that the selected scheme ignores -> warning only.
+    # 6. Options that have no effect with the selected settings -> warnings only.
+    # The surface energy balance computes melt, which would be discarded with MELT false:
+    # MELT is switched on (in the dictionary, so the model uses it too).
+    if c.get('SEB', False) and not c.get('MELT', False):
+        c['MELT'] = True
+        warnings.append(
+            "'SEB' is true but 'MELT' is false: the surface energy balance computes melt, "
+            "which would be discarded. Switching 'MELT' to true.")
+
+    if c.get('LeakyLenses', False):
+        if c.get('MELT', False) and c.get('liquid', 'bucket') != 'bucket':
+            warnings.append(
+                "'LeakyLenses' is only used by the bucket scheme; it has no effect "
+                "with liquid = {!r}".format(c['liquid']))
+        elif c.get('DownToIce', False):
+            warnings.append(
+                "'LeakyLenses' is ignored when 'DownToIce' is true")
+
+    if c.get('IceMeltFactor', 1.0) != 1.0:
+        if not c.get('MELT', False):
+            warnings.append("'IceMeltFactor' has no effect when 'MELT' is false")
+        elif c.get('SEB', False):
+            warnings.append(
+                "'IceMeltFactor' is not used when 'SEB' is true (the surface energy balance "
+                "uses the albedo)")
+
+    if (c.get('SEB', False) and c.get('SEB_turb_method', 'prescribed') in ('bulk_richardson', 'monin_obukhov')
+            and not c.get('SUBLIM', True)):
+        warnings.append(
+            "'SUBLIM' is false but 'SEB_turb_method' is '{}': the latent heat flux is part of the energy "
+            "balance, but the sublimation or deposition that goes with it is not applied to the firn. "
+            "Set 'SUBLIM' to true.".format(c['SEB_turb_method']))
+
+    # 7. A key that the selected scheme ignores -> warning only.
     if (c.get('MELT') and c.get('keep_firnthickness')
             and c.get('liquid') in LIQUID_IGNORES_KEEP_FIRNTHICKNESS):
         warnings.append(
@@ -289,8 +347,8 @@ if __name__ == '__main__':
         print("usage: python config_validation.py <config.json>")
         sys.exit(2)
     path = sys.argv[1]
-    with open(path, "r") as _f:
-        _c = json.loads(_f.read())
+    from config_loader import load_config
+    _c = load_config(path)
     try:
         validate_config(_c, config_path=path)
     except ConfigValidationError as err:

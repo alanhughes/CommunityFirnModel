@@ -25,7 +25,7 @@ Documentation is still (always) a work in progress, and in the past few years I 
 
 ## Installation
 
-The CFM is coded in python. To use the software, you need to clone the repository to your computer.
+The CFM is coded in python (3.11 or newer). To use the software, you clone the repository to your computer, install the packages in `requirements.txt` (`pip install -r requirements.txt`), and run the scripts from the `CFM_main` folder; there is nothing else to install. The documentation has an [installation and quick-start page](https://communityfirnmodel.readthedocs.io/en/latest/running/quickstart.html).
 
 ## Running the CFM
 
@@ -42,7 +42,7 @@ Both work out of the box with the example forcing files included in the reposito
 
 >>> python run_CFM_example.py "66.5,-46.25"
 
-for the DYE-2 example, or `"72.5,-38.75"` for the Summit example. Instructions and configuration options are documented inside the files themselves.
+for the DYE-2 example, or `"72.5,-38.75"` for the Summit example. Instructions and configuration options are documented inside the files themselves. The documentation also describes how to run the CFM ("Ways to run the CFM"), how the model is spun up ("Model spin-up", including the reference climate interval that is repeated ahead of the record), and the format of the forcing data ("Inputs for the CFM").
 
 ### Legacy: command line via main.py
 

@@ -110,7 +110,7 @@ def calcSEB(SWGNT,LWGAB,HFLUX,EFLUX,TS,tindex,dt,GHTSKIN=0,dz=0.05,rhos=400):
         b = 0
         c = 0
         d = 1
-        e = -1 * (flux_df1[kk]*dt/(CP_I*m)+T_0)
+        e = -1 * (flux_df1.iloc[kk]*dt/(CP_I*m)+T_0)
 
         pmat[0] = a
         pmat[3] = d
@@ -123,7 +123,7 @@ def calcSEB(SWGNT,LWGAB,HFLUX,EFLUX,TS,tindex,dt,GHTSKIN=0,dz=0.05,rhos=400):
 
         if Tnew>=273.15:
             TcalcH[kk] = 273.15000000000000        
-            meltmassH[kk] = (flux_df1[kk] - SBC*273.15**4) / LF_I * dt #multiply by dt to put in units per time step
+            meltmassH[kk] = (flux_df1.iloc[kk] - SBC*273.15**4) / LF_I * dt #multiply by dt to put in units per time step
 
         else:
             try:
@@ -134,6 +134,52 @@ def calcSEB(SWGNT,LWGAB,HFLUX,EFLUX,TS,tindex,dt,GHTSKIN=0,dz=0.05,rhos=400):
             meltmassH[kk] = 0
             
     return TcalcH,meltmassH
+    ### end calcSEB
+    ###############
+
+def flux_to_rate(flux, time):
+    '''
+    Convert mass flux per step [kg m-2 per step] to rate [m ice eq. yr-1] such
+    that FirnDensityNoSpin ('exact' timesetup) recovers the original mass:
+    mass added at step i = rate[i] * (time[i] - time[i-1]); step 0 uses the
+    mean step length, matching the model's dt construction.
+    '''
+    dtyr = np.diff(time)
+    dtyr = np.append(np.mean(dtyr), dtyr)
+    
+    return flux / 917.0 / dtyr
+    ### end flux_to_rate ###
+    #####################
+
+def sublim_sign_check(SUBLIM, QL, r_tol=-0.5):
+    '''
+    Check that the sublimation and the latent heat flux have consistent signs.
+
+    In the CFM convention QL is positive into the snow and SUBLIM is negative for sublimation,
+    so sublimation (SUBLIM < 0) cools the surface (QL < 0) and the two are positively correlated.
+    For raw MERRA-2 data (EVAP and EFLUX both positive upward, and EVAP is the latent heat flux
+    divided by the latent heat) the correlation is about +1 for both multiplied by -1 or both
+    unchanged, so a correlation near -1 means that exactly one of them was multiplied by -1.
+
+    Parameters
+    ----------
+    SUBLIM, QL: array-like
+        the two series, on the same time axis (NaNs are ignored)
+    r_tol: float
+        the correlation below which the signs are judged inconsistent
+
+    Returns
+    -------
+    dict(consistent=bool or None, r=float): consistent is None if the check could not be made
+    (constant or too short series)
+    '''
+    a = np.asarray(SUBLIM, dtype=float)
+    b = np.asarray(QL, dtype=float)
+    ok = np.isfinite(a) & np.isfinite(b)
+    if ok.sum() < 30 or np.std(a[ok]) == 0 or np.std(b[ok]) == 0:
+        return dict(consistent=None, r=np.nan)
+    r = float(np.corrcoef(a[ok], b[ok])[0, 1])
+    return dict(consistent=bool(r > r_tol), r=r)
 
 def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, spin_date_end = 1995.0,melt=False,desired_depth = None,SEB=False,rho_bottom=916,calc_melt=False,num_reps=None,bdm_sublim=True):
     '''
@@ -152,6 +198,15 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
     CFM takes units of m ice eq./year, so this script returns units in that 
     format.
 
+    SIGN CONVENTIONS (the dataframe must already follow them; nothing here changes the sign,
+    with one exception: a legacy MERRA-2 column named EVAP is converted to SUBLIM = -EVAP):
+    energy fluxes QH and QL (surface energy balance) are positive INTO the snow, and SUBLIM is
+    negative for sublimation (mass loss). MERRA-2 HFLUX, EFLUX (-> QH, QL) and EVAP (-> SUBLIM)
+    are positive upward, so multiply them by -1; ERA5 sensible and latent heat fluxes are
+    positive downward and can be used as they are. SEB.py warns if QH looks positive upward,
+    and this function warns if SUBLIM and QL have opposite signs (see sublim_sign_check).
+    See "Sign conventions of the forcing" in the documentation (Inputs for the CFM).
+
     Parameters
     ----------
 
@@ -165,7 +220,12 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
      spin_date_st: float
          decimal date of the start of the reference climate interval (RCI)
      spin_date_end: float
-         decimal date of the end of the RCI
+         decimal date of the START of the last year of the RCI, i.e. the RCI is
+         [spin_date_st, spin_date_end + 1). E.g. spin_date_st=1965.0, spin_date_end=1995.0
+         uses 1965-01-01 through 1995-12-31 (31 years). The RCI is repeated back in time
+         (num_reps times) ahead of the real record to spin up the firn. spin_date_st should
+         equal the first date of the input record (a warning is printed otherwise) and sit
+         on a year boundary.
 
     Returns
     -------
@@ -194,10 +254,29 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
     else: #CLIM_name is not a pickle, it is the dataframe being passed
         df_CLIM = CLIM_name
 
+    if 'SUBLIM' in df_CLIM.columns and 'QL' in df_CLIM.columns:
+        _chk = sublim_sign_check(df_CLIM['SUBLIM'].values, df_CLIM['QL'].values)
+        if _chk['consistent'] is False:
+            print(f"WARNING: SUBLIM and QL are negatively correlated (r = {_chk['r']:.2f}). In the CFM convention\n"
+                  f"  SUBLIM is negative for sublimation and QL is negative when the surface loses heat, so they\n"
+                  f"  should be positively correlated. One of the two probably has the wrong sign (MERRA-2 EVAP and\n"
+                  f"  EFLUX are positive upward and must both be multiplied by -1). See 'Sign conventions of the\n"
+                  f"  forcing' in the documentation (Inputs for the CFM).")
+
+    clim_start = toYearFraction(df_CLIM.index[0])
+    spin_shift = spin_date_st - clim_start   # clim_start from the warning block
+    if abs(spin_date_st - clim_start) > 1/365.25:
+        print(f'WARNING: spin_date_st ({spin_date_st}) differs from the start of the climate input ({clim_start:.4f}).\n'
+              f'  The spin-up mask takes data from the record start, not spin_date_st, so repeated\n'
+              f'  RCI blocks will overlap or leave gaps (block length != RCI_length).')
+
     #### Option 1: not using SEB; not calculating melt
     if (not SEB and not calc_melt): # just use T_surf and melt from the input climate
 
-        drn = {'TS':'TSKIN','EVAP':'SUBLIM'} #customize this to change your dataframe column names to match the required inputs
+        drn = {'TS':'TSKIN'} #customize this to change your dataframe column names to match the required inputs
+        if 'EVAP' in df_CLIM.columns and 'SUBLIM' not in df_CLIM.columns:
+            # MERRA-2 EVAP is positive for sublimation; the CFM's SUBLIM is negative for sublimation.
+            df_CLIM['SUBLIM'] = -1 * df_CLIM['EVAP']
         try:
             df_CLIM['RAIN'] = df_CLIM['PRECTOT'] - df_CLIM['PRECSNO']
             df_CLIM['BDOT'] = df_CLIM['PRECSNO'] #+ df_CLIM['EVAP']
@@ -211,13 +290,14 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
         except:
             pass
         l1 = df_CLIM.columns.values.tolist()
-        l2 = ['SMELT','BDOT','RAIN','TSKIN','SUBLIM','SRHO']
+        l2 = ['SMELT','BDOT','RAIN','TSKIN','SUBLIM','SRHO','eps_divergence','eps_1','eps_2','eps_xx','eps_yy','eps_xy'] # columns kept (eps_*: optional horizontal strain rates)
         notin = list(np.setdiff1d(l1,l2))
         df_CLIM.drop(notin,axis=1,inplace=True)
         # df_BDOT = pd.DataFrame(df_CLIM.BDOT)
         df_TS = pd.DataFrame(df_CLIM.TSKIN)
 
-        res_dict_all = {'SMELT':'sum','BDOT':'sum','RAIN':'sum','TSKIN':'mean','SUBLIM':'sum','SRHO':'mean'} # resample type for all possible variables
+        res_dict_all = {'SMELT':'sum','BDOT':'sum','RAIN':'sum','TSKIN':'mean','SUBLIM':'sum','SRHO':'mean',
+                        'eps_divergence':'mean','eps_1':'mean','eps_2':'mean','eps_xx':'mean','eps_yy':'mean','eps_xy':'mean'} # resample type for all possible variables (eps_*: horizontal strain rates [1/yr], optional; see strain.get_strain_input)
         res_dict = {key:res_dict_all[key] for key in df_CLIM.columns} # resample type for just the data types in df_CLIM
 
         # df_BDOT_re = df_BDOT.resample(timeres).sum()
@@ -252,7 +332,7 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
         else:
             BDOT_mean_IE = ((df_CLIM_re['BDOT'])*stepsperyear/917).mean()
 
-        SMELT_mean_IE = ((df_CLIM_re['SMELT'])*stepsperyear/917).mean()
+        # SMELT_mean_IE = ((df_CLIM_re['SMELT'])*stepsperyear/917).mean()
 
         # BDOT_mean_IE = BDOT_mean_IE - SMELT_mean_IE
         # print('BDOT_mean corrected for SMELT')
@@ -280,6 +360,7 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
             pass
         else:
             num_reps = int(np.round(desired_depth/BDOT_mean_IE/RCI_length))
+        num_reps = max(num_reps,1)
         print(f'num_reps:{num_reps}')
         years = num_reps*RCI_length
         sub = np.arange(-1*years,0,RCI_length)
@@ -288,8 +369,9 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
         startday  = df_CLIM_re.index[0].day
         startstring = '{}/{}/{}'.format(startday,startmonth,startyear)
 
-        msk = df_CLIM_re.decdate.values<spin_date_end+1
-        spin_days = df_CLIM_re.decdate.values[msk]
+        dd = df_CLIM_re.decdate.values
+        msk = (dd >= spin_date_st) & (dd < spin_date_end + 1)
+        spin_days = dd[msk] - spin_shift
 
         smb_spin = df_CLIM_re['BDOT'][msk].values
         tskin_spin = df_CLIM_re['TSKIN'][msk].values
@@ -311,14 +393,14 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
         df_FULL = pd.concat([df_spin,df_CLIM_decdate])
 
         CD = {}
-        CD['time'] = df_FULL.index
+        CD['time'] = df_FULL.index.values
+        CD['forcing_data_start'] = df_CLIM_decdate.index[0]
+        mass_ids = ['SMELT','BDOT','RAIN','SUBLIM']
         for ID in df_CLIM_ids:
-            if ID == 'TSKIN':
-                CD[ID] = df_FULL[ID].values
-            elif ID=='SRHO':
-                CD[ID] = df_FULL[ID].values
+            if ID in mass_ids:
+                CD[ID] = flux_to_rate(df_FULL[ID].values, CD['time'])
             else:
-                CD[ID] = df_FULL[ID].values * stepsperyear / 917
+                CD[ID] = df_FULL[ID].values
 
         SEBfluxes = None
 
@@ -330,7 +412,10 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
     elif (not SEB and calc_melt): # calculate the melt flux based on energy fluxes from climate data, but SEB module in CFM will not run
         #(this is something of a pre-calculation of the melt.)
 
-        drn = {'TS':'TSKIN','EVAP':'SUBLIM'} #customize this to change your dataframe column names to match the required inputs
+        drn = {'TS':'TSKIN'} #customize this to change your dataframe column names to match the required inputs
+        if 'EVAP' in df_CLIM.columns and 'SUBLIM' not in df_CLIM.columns:
+            # MERRA-2 EVAP is positive for sublimation; the CFM's SUBLIM is negative for sublimation.
+            df_CLIM['SUBLIM'] = -1 * df_CLIM['EVAP']
         try:
             df_CLIM['RAIN'] = df_CLIM['PRECTOT'] - df_CLIM['PRECSNO']
             df_CLIM['BDOT'] = df_CLIM['PRECSNO'] #+ df_CLIM['EVAP']
@@ -350,7 +435,8 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
 
         SBC = 5.67e-8
         CP_I = 2097.0 
-        m = 400*0.08
+        m = 400*0.05
+
         dt = df_CLIM.index.to_series().diff().dt.total_seconds().mean()
         LF_I = 333500.0 #[J kg^-1]
         flux_df1 = ((df_CLIM['SW_d'] * (1 - df_CLIM['ALBEDO'])) + df_CLIM['LW_d'] + df_CLIM['QH'] + df_CLIM['QL']) #make sure that merra2 QH and QL are multiplied by -1 to make them 'into' the layer
@@ -392,7 +478,7 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
 
             if Tnew>=273.15:
                 Tcalc[kk] = 273.15000000000000        
-                meltmass[kk] = (flux_df1[kk] - SBC*273.15**4) / LF_I * dt #multiply by dt to put in units per time step
+                meltmass[kk] = (flux_df1.iloc[kk] - SBC*273.15**4) / LF_I * dt #multiply by dt to put in units per time step
 
             else:
                 Tcalc[kk] = Tnew
@@ -412,13 +498,14 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
 
         #############
         l1 = df_CLIM.columns.values.tolist()
-        l2 = ['SMELT','BDOT','RAIN','TSKIN','SUBLIM','SRHO']
+        l2 = ['SMELT','BDOT','RAIN','TSKIN','SUBLIM','SRHO','eps_divergence','eps_1','eps_2','eps_xx','eps_yy','eps_xy'] # columns kept (eps_*: optional horizontal strain rates)
         notin = list(np.setdiff1d(l1,l2))
         df_CLIM.drop(notin,axis=1,inplace=True)
         # df_BDOT = pd.DataFrame(df_CLIM.BDOT)
         df_TS = pd.DataFrame(df_CLIM.TSKIN)
 
-        res_dict_all = {'SMELT':'sum','BDOT':'sum','RAIN':'sum','TSKIN':'mean','SUBLIM':'sum','SRHO':'mean'} # resample type for all possible variables
+        res_dict_all = {'SMELT':'sum','BDOT':'sum','RAIN':'sum','TSKIN':'mean','SUBLIM':'sum','SRHO':'mean',
+                        'eps_divergence':'mean','eps_1':'mean','eps_2':'mean','eps_xx':'mean','eps_yy':'mean','eps_xy':'mean'} # resample type for all possible variables (eps_*: horizontal strain rates [1/yr], optional; see strain.get_strain_input)
         res_dict = {key:res_dict_all[key] for key in df_CLIM.columns} # resample type for just the data types in df_CLIM
 
         # df_BDOT_re = df_BDOT.resample(timeres).sum()
@@ -427,6 +514,7 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
         elif Tinterp == 'effective':
             df_TS_re = df_TS.resample(timeres).apply(effectiveT)
         elif Tinterp == 'weighted':
+            df_BDOT = pd.DataFrame(df_CLIM.BDOT)
             df_TS_re = pd.DataFrame(data=(df_BDOT.BDOT*df_TS.TSKIN).resample(timeres).sum()/(df_BDOT.BDOT.resample(timeres).sum()),columns=['TSKIN'])
             # pass
 
@@ -472,7 +560,11 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
         
         #### Make spin up series ###
         RCI_length = spin_date_end-spin_date_st+1
-        num_reps = int(np.round(desired_depth/BDOT_mean_IE/RCI_length))
+        if num_reps is not None:
+            pass
+        else:
+            num_reps = int(np.round(desired_depth/BDOT_mean_IE/RCI_length))
+        num_reps = max(num_reps,1)
         print(num_reps)
         years = num_reps*RCI_length
         sub = np.arange(-1*years,0,RCI_length)
@@ -481,8 +573,9 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
         startday  = df_CLIM_re.index[0].day
         startstring = '{}/{}/{}'.format(startday,startmonth,startyear)
 
-        msk = df_CLIM_re.decdate.values<spin_date_end+1
-        spin_days = df_CLIM_re.decdate.values[msk]
+        dd = df_CLIM_re.decdate.values
+        msk = (dd >= spin_date_st) & (dd < spin_date_end + 1)
+        spin_days = dd[msk] - spin_shift
 
         smb_spin = df_CLIM_re['BDOT'][msk].values
         tskin_spin = df_CLIM_re['TSKIN'][msk].values
@@ -505,14 +598,15 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
         # df_FULL.to_csv('df_full_noSEB.csv')
 
         CD = {}
-        CD['time'] = df_FULL.index
+        CD['time'] = np.concatenate((spin_days_all,df_CLIM_re['decdate'].values))
+        CD['forcing_data_start'] = df_CLIM_re['decdate'].values[0]
+        massIDs = ['SMELT','BDOT','RAIN','SUBLIM','EVAP']
         for ID in df_CLIM_ids:
-            if ID == 'TSKIN':
-                CD[ID] = df_FULL[ID].values
-            elif ID=='SRHO':
-                CD[ID] = df_FULL[ID].values
+            _v = np.concatenate((np.tile(df_CLIM_re[ID][msk].values, len(sub)),df_CLIM_re[ID].values))
+            if ID not in massIDs:
+                CD[ID] = _v
             else:
-                CD[ID] = df_FULL[ID].values * stepsperyear / 917
+                CD[ID] = flux_to_rate(_v, CD['time']).astype('float32')
 
         SEBfluxes = None
     ### end option 2
@@ -536,7 +630,9 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
         #                'ALBEDO':'mean','QL':'sum','QH':'sum','SUBLIM':'sum','SW_d':'sum','LW_d':'sum'}) # resample type for all possible variables
 
         res_dict_all = ({'BDOT':'sum','RAIN':'sum','TSKIN':'mean','T2m':'mean',
-                       'ALBEDO':'mean','QL':'mean','QH':'mean','SUBLIM':'sum','SW_d':'mean','LW_d':'mean','LW_u':'mean'}) # resample type for all possible variables
+                       'ALBEDO':'mean','QL':'mean','QH':'mean','SUBLIM':'sum','SW_d':'mean','LW_d':'mean','LW_u':'mean',
+                       'WS':'mean','QV2m':'mean','PS':'mean','z0m':'mean','z0h':'mean','z0q':'mean',
+                       'eps_divergence':'mean','eps_1':'mean','eps_2':'mean','eps_xx':'mean','eps_yy':'mean','eps_xy':'mean'}) # resample type for all possible variables (WS, QV2m, PS, z0* are for SEB_turb_method != 'prescribed')
 
         res_dict = {key:res_dict_all[key] for key in df_CLIM.columns} # resample type for just the data types in df_CLIM
 
@@ -596,7 +692,11 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
 
         #### Make spin up series ###
         RCI_length = spin_date_end-spin_date_st+1
-        num_reps = int(np.round(desired_depth/BDOT_mean_IE/RCI_length))
+        if num_reps is not None:
+            pass
+        else:
+            num_reps = int(np.round(desired_depth/BDOT_mean_IE/RCI_length))
+        num_reps = max(num_reps,1)
         print(f'num_reps:{num_reps}')
         years = num_reps*RCI_length
         sub = np.arange(-1*years,0,RCI_length)
@@ -605,11 +705,13 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
         startday  = df_CLIM_re.index[0].day
         startstring = '{}/{}/{}'.format(startday,startmonth,startyear)
 
-        msk = df_CLIM_re.decdate.values<spin_date_end+1
-        spin_days = df_CLIM_re.decdate.values[msk]
+        dd = df_CLIM_re.decdate.values
+        msk = (dd >= spin_date_st) & (dd < spin_date_end + 1)
+        spin_days = dd[msk] - spin_shift
 
-        msk_seb = df_CLIM_seb.decdate.values<spin_date_end+1
-        spin_days_seb = df_CLIM_seb.decdate.values[msk_seb]
+        dd_seb = df_CLIM_seb.decdate.values
+        msk_seb = (dd_seb >= spin_date_st) & (dd_seb < spin_date_end + 1)
+        spin_days_seb = dd_seb[msk_seb] - spin_shift
 
         # smb_spin = df_CLIM_re['BDOT'][msk].values
         # tskin_spin = df_CLIM_re['TSKIN'][msk].values
@@ -668,6 +770,7 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
 
         CD = {}
         CD['time'] = np.concatenate((spin_days_all,df_CLIM_re['decdate'].values))
+        CD['forcing_data_start'] = df_CLIM_re['decdate'].values[0]
         massIDs = ['SMELT','BDOT','RAIN','SUBLIM','EVAP']
         for ID in df_CLIM_ids:
             if ID not in massIDs:
@@ -683,7 +786,8 @@ def makeSpinFiles(CLIM_name,timeres='1D',Tinterp='mean',spin_date_st = 1980.0, s
             if ID not in massIDs:
                 SEBfluxes[ID] = np.concatenate((np.tile(df_CLIM_seb[ID][msk_seb].values, len(sub)),df_CLIM_seb[ID].values)).astype('float32')
             else:
-                SEBfluxes[ID] = ((np.concatenate((np.tile(df_CLIM_seb[ID][msk_seb].values, len(sub)),df_CLIM_seb[ID].values))) * stepsperyear / 917).astype('float32')
+                # mass per SEB step -> rate [m ie/yr]: needs the number of SEB steps per year (the SEB fields are finer than the model step)
+                SEBfluxes[ID] = ((np.concatenate((np.tile(df_CLIM_seb[ID][msk_seb].values, len(sub)),df_CLIM_seb[ID].values))) * stepsperyear_seb / 917).astype('float32')
 
     return CD, stepsperyear, depth_S1, depth_S2, desired_depth, SEBfluxes
 
