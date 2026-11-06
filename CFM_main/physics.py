@@ -178,7 +178,7 @@ class FirnPhysics:
         # from 550 kg/m^3 > rho > 551 kg/m^3, where the classical HL_dynamic stage 2 model is applied.
         RHO_12      = 551.0
         z1mask      = (self.rho < RHO_1)
-        z12mask     = ((self.rho > RHO_1) & (self.rho <= RHO_12))  # Transition zone.
+        z12mask     = ((self.rho >= RHO_1) & (self.rho <= RHO_12))  # Transition zone.
         z2mask      = ((self.rho >= RHO_12) & (self.rho < RHO_I))  # Stage 2 - transition zone
         zImask      = (self.rho >= RHO_I)
 
@@ -327,8 +327,8 @@ class FirnPhysics:
             beta1a = -1.218 - 0.403 * TmC
             beta2a = beta1a * (0.792 - 1.080 * np.mean(A_mean) + 0.00465 * TmC)
 
-            dr_dt[self.rho <= RHO_1] = (RHO_I - self.rho[self.rho <= RHO_1]) * A_instant * beta1 * 8.36 * (K_TO_C - self.Tz[self.rho <= RHO_1]) ** -2.061
-            dr_dt[self.rho > RHO_1]  = (RHO_I - self.rho[self.rho > RHO_1]) * A_instant * beta2 * 8.36 * (K_TO_C - self.Tz[self.rho > RHO_1]) ** -2.061
+            dr_dt[self.rho <= RHO_1] = (RHO_I - self.rho[self.rho <= RHO_1]) * A_instant * beta1a * 8.36 * (K_TO_C - self.Tz[self.rho <= RHO_1]) ** -2.061
+            dr_dt[self.rho > RHO_1]  = (RHO_I - self.rho[self.rho > RHO_1]) * A_instant * beta2a * 8.36 * (K_TO_C - self.Tz[self.rho > RHO_1]) ** -2.061
         
         elif self.bdot_type == 'mean':
 
