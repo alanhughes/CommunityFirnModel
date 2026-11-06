@@ -55,7 +55,10 @@ table). For the models that use the accumulation rate, **bdot_type** selects whi
   accumulation rate predicts no densification when the accumulation rate is zero. In steady state the mean
   and the instantaneous rate are the same.
 * ``instant``: the accumulation rate of the current time step. Several models print a warning that this is
-  not recommended, and two do not work with it (see "Limitations" below).
+  not recommended, and one does not work with it (see "Limitations" below). In a time step with no accumulation,
+  ``Ligtenberg2011``, ``Simonsen2013``, ``KuipersMunneke2015``, ``Brils2022`` and ``Veldhuijsen2023`` give a rate of
+  0. The code does not calculate their multipliers in that time step, because these have
+  :math:`\ln\dot b` or :math:`\dot b^{-0.5}`. The rate of 0 is the limit of the equations as :math:`\dot b` goes to 0.
 * ``stress``: listed as an option of **bdot_type**, but still in progress (see :doc:`../running/json`).
 
 The accumulation rates in the input and in the configuration are always in m ice equivalent per year; each
@@ -117,7 +120,7 @@ Summary
    * - ``Li2015``
      - Li and Zwally (2015)
      - :math:`\bar{\dot b}`
-     - Tuned for Antarctica. Not suitable for wet firn. Fails with ``instant``.
+     - Tuned for Antarctica. Not suitable for wet firn.
    * - ``Helsen2008``
      - Helsen et al. (2008)
      - :math:`\bar{\dot b}`
@@ -276,8 +279,9 @@ the coefficient :math:`\beta`. The rate becomes very large near the melting poin
 
 ``Li2015``
     Tuned for Antarctica: :math:`\beta_1 = -1.218 - 0.403\,T_{m,C}` and
-    :math:`\beta_2 = \beta_1\,(0.792 - 1.080\,\dot b_m + 0.00465\,T_{m,C})`. Does not run with ``instant``
-    (see "Limitations").
+    :math:`\beta_2 = \beta_1\,(0.792 - 1.080\,\dot b_m + 0.00465\,T_{m,C})`. With ``instant``, the coefficients do not
+    change: :math:`\beta_2` still uses :math:`\dot b_m`, and only the accumulation rate that multiplies them is that of
+    the time step.
 
 ``Helsen2008``
     Antarctica. The form of Li and Zwally with a single coefficient for both stages,
@@ -423,8 +427,7 @@ Limitations
 Things to know about the current implementation:
 
 * ``Veldhuijsen2023`` uses the coefficients of ``KuipersMunneke2015`` (see above).
-* ``Li2015`` with ``bdot_type`` ``instant`` stops with an error (a variable is used before it is defined).
-  ``GSFC2020`` stops with ``instant``, and ``Arthern2010T`` needs **physGrain**.
+* ``GSFC2020`` stops with ``instant``, and ``Arthern2010T`` needs **physGrain**.
 
 Adding a model
 ==============

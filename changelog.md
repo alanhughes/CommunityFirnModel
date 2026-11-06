@@ -45,7 +45,6 @@ https://communityfirnmodel.readthedocs.io/en/latest/
 
 - *Issues* 
 	- `physRho` `Veldhuijsen2023` uses the coefficients of `KuipersMunneke2015`; the coefficients published for IMAU-FDM v1.2A (Veldhuijsen et al., 2023) are not implemented yet (the model prints a message that it is in development).
-	- `physRho` `Li2015` fails with `bdot_type` `instant` (`UnboundLocalError`: `beta1` is used before it is defined). Use `mean`.
 	- If data is not written at each time step, dH that is saved/written to file does not represent the change since the last write. 
 	- The corrected dH (DIP columns 5 and 6) sums to zero when the model is in steady state (within about half a percent of the accumulation); the uncorrected dH (columns 2 and 3) keeps a constant drift when the bottom of the domain is lighter than ice, so use the corrected fields in that case.
 	- The siteClimate_from_RCM.py file is a mess; if you want to use it the best thing to do is to get in touch with me (maxstev@umd.edu) and I can help you get it running for your needs.
@@ -60,6 +59,12 @@ https://communityfirnmodel.readthedocs.io/en/latest/
 	- Not exactly in progress, but at some point adding a log file that gets saved in the results folder would be a good idea.
 	- I am working on adding additional physics to simulate near-surface snow compaction ("stage zero compaction")
 	- Vapor-phase transport (vapor.py) is in development and is not part of the release
+
+## [Unreleased]
+### Bug fixes
+- *physics.py* **`Li2015` runs with `bdot_type` `instant`.** The `instant` branch set `beta1a` and `beta2a` but read `beta1` and `beta2`, so the model stopped with an `UnboundLocalError`. It now reads `beta1a` and `beta2a`. Results with `mean` do not change.
+- *physics.py* **`HLSigfus`: a node at exactly 550 kg m-3 has a rate.** No zone mask included this density, so the rate of the node was zero. The node now uses the transition equation. Results change only for a node at exactly this density.
+- *physics.py* **A rate of 0 at zero instant accumulation.** With `bdot_type` `instant` and no accumulation in a time step, `Ligtenberg2011`, `KuipersMunneke2015`, `Brils2022`, `Veldhuijsen2023` and `Simonsen2013` gave a NaN rate, from ln(0) or 1/sqrt(0) multiplied by 0. They now give 0, which is the limit of the equations. Results change only for those time steps.
 
 ## [4.1.0] 2026-11-03
 ### New
