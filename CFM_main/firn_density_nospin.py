@@ -54,7 +54,7 @@ from merge import mergenotsurf #VV
 from re_snowpack import resingledomain #VV
 from prefflow_snowpack import prefflow #VV
 from sublim import sublim #VV
-from ModelOutputs import ModelOutputs
+from ModelOutputs import ModelOutputs, DARCY_SNAPSHOT_OUTPUTS
 
 class FirnDensityNoSpin:
     '''
@@ -1085,6 +1085,16 @@ class FirnDensityNoSpin:
         
         if ((not self.MELT) and ('LWC' in self.output_list)):
             self.output_list.remove('LWC')
+        ### 'darcy_snapshot': the state partway through each darcy step (see darcyscheme)
+        self.darcy_snapshot = False
+        if 'darcy_snapshot' in self.output_list:
+            self.output_list.remove('darcy_snapshot')
+            if self.MELT and self.c['liquid'] == 'darcy':
+                self.darcy_snapshot = True
+                self.output_list.extend(DARCY_SNAPSHOT_OUTPUTS + ('snapshot_time',))
+                clear_darcy_snapshot(self)
+            else:
+                print("The output 'darcy_snapshot' needs MELT true and liquid 'darcy'. It is not written.")
         if ((not self.c['FirnAir']) and ('gasses' in self.output_list)):
             self.output_list.remove('gasses')
         if ((not self.c['isoDiff']) and ('isotopes' in self.output_list)):
@@ -1426,6 +1436,8 @@ class FirnDensityNoSpin:
                 ### end bucket ##################
 
                 elif self.c['liquid'] == 'darcy':
+                    if self.darcy_snapshot:
+                        clear_darcy_snapshot(self) # NaN unless darcyscheme runs in this step
                     if (self.snowmeltSec[iii]>0) or (np.any(self.LWC > 0.)) or (self.rainSec[iii] > 0.): #i.e. there is water
                         ### Use Darcy scheme only after spin-up period to reduce computational time ###
                         if self.modeltime[iii]<self.bucket_until_year:

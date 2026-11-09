@@ -5,6 +5,7 @@ import time
 import sys
 
 from diffusion import heatDiff
+from ModelOutputs import DARCY_SNAPSHOT_OUTPUTS
 
 from darcy_funcs import hydrconducsat_Calonne
 from darcy_funcs import hydrconducsat_power_law
@@ -982,7 +983,8 @@ _DARCY_DEFAULTS = {
     'runoff_method_darcy': 'Darcy', 'ColeouLesaffre': True, 'IrrVal': 0.02, 'theta_s_factor_darcy': RHO_I_MGM,
     'Ksat_darcy': 'Calonne', 'Ksat_k0_darcy': 5.56e-11, 'viscosity_darcy': 0.001792,
     'krel_darcy': 'vanGenuchten', 'krel_exponent_darcy': 2.,
-}  # the values the scheme used before these options were configurable
+    'snapshot_fraction_darcy': 0.5,
+}  # the values the scheme used before these options were configurable (snapshot_fraction_darcy is new)
 _KSAT_LAWS_DARCY = ('Calonne', 'power_law')        # values of Ksat_darcy
 _KREL_LAWS_DARCY = ('vanGenuchten', 'power_law')   # values of krel_darcy
 _darcy_missing_reported = set()
@@ -1000,6 +1002,17 @@ def _darcy_option(config, key):
     return _DARCY_DEFAULTS[key]
 ### end _darcy_option ###
 #########################
+
+def clear_darcy_snapshot(self):
+    '''
+    Set the snapshot outputs of darcyscheme (output 'darcy_snapshot') to NaN, for a step in which
+    darcyscheme does not run: a dry step, or a step before bucket_until_year.
+    '''
+    for name in DARCY_SNAPSHOT_OUTPUTS:
+        setattr(self, name, np.full(len(self.dz), np.nan))
+    self.snapshot_time = np.nan
+### end clear_darcy_snapshot ###
+################################
 
 def darcyscheme(self,iii):
     '''
@@ -1115,6 +1128,10 @@ def darcyscheme(self,iii):
         theta_e^n. The pressure head stays van Genuchten in both cases.
     krel_exponent_darcy : float
         n of the "power_law" option. Default 2 (Meyer and Hewitt, 2017).
+    snapshot_fraction_darcy : float
+        Read only if `self.darcy_snapshot` is True (the output 'darcy_snapshot').
+        The fraction of the step, from 0 to 1, at which the snapshot is taken.
+        Default 0.5, the middle of the step.
 
     With Ksat_darcy and krel_darcy at "power_law", the flux law is that of
     Meyer and Hewitt (2017) only if theta_e is their saturation phi_w/phi.
@@ -1156,6 +1173,15 @@ def darcyscheme(self,iii):
          (<= 0) thickness removed from the top of the column by melt [m],
          the same quantity bucket() returns; update_dH needs it.
 
+        If `self.darcy_snapshot` is True, also sets the snapshot outputs:
+        `self.LWC_snapshot`, `self.rho_snapshot`, `self.Tz_snapshot` and
+        `self.z_snapshot` (the state of each node partway through the step),
+        and `self.snapshot_time` [s from the start of the step]. The snapshot
+        is the state at the end of the first sub-step that reaches
+        snapshot_fraction_darcy * dt, so snapshot_time can be later by up to
+        one sub-step (at most dtmax_darcy). The sub-steps are the same as
+        without the snapshot, so the snapshot does not change the run.
+
     Notes
     -----
     Originally coded by Vincent Verjans. As of this documentation pass, the
@@ -1196,6 +1222,12 @@ def darcyscheme(self,iii):
         raise ValueError(f'Ksat_darcy is "{Ksat_law}". It must be one of {_KSAT_LAWS_DARCY}.')
     if krel_law not in _KREL_LAWS_DARCY:
         raise ValueError(f'krel_darcy is "{krel_law}". It must be one of {_KREL_LAWS_DARCY}.')
+    snapshot_at = None   # time in the step at which the snapshot outputs are taken [s]; None: no snapshot
+    if getattr(self, 'darcy_snapshot', False):
+        snapshot_fraction = _darcy_option(self.c, 'snapshot_fraction_darcy')
+        if not 0. <= snapshot_fraction <= 1.:
+            raise ValueError(f'snapshot_fraction_darcy is {snapshot_fraction}. It must be from 0 to 1.')
+        snapshot_at = snapshot_fraction * timetot
 
     ### Surface fluxes ###
     melt_mass_tot = self.snowmeltSec[iii] * S_PER_YEAR * RHO_I       # total melt over the Darcy routine [kg]
@@ -1555,6 +1587,14 @@ def darcyscheme(self,iii):
         refr_layer = refr_layer + refr / RHO_W_KGM                      # and per layer [m we]
 
         timer = timer + dtsub   # advance the sub-step timer
+
+        if snapshot_at is not None and timer >= snapshot_at:
+            # Snapshot outputs: the state at the end of the first sub-step that reaches snapshot_at.
+            # The sub-step lengths do not change, so the snapshot does not change the run.
+            self.LWC_snapshot, self.rho_snapshot = np.copy(self.LWC), np.copy(self.rho)
+            self.Tz_snapshot, self.z_snapshot    = np.copy(self.Tz), np.copy(self.z)
+            self.snapshot_time = timer
+            snapshot_at = None
 
         ### Adapt the sub-step size ###
         if np.any(ifl):
