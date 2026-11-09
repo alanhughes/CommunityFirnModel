@@ -89,7 +89,7 @@ ALLOWED_VALUES = {
         'density', 'depth', 'temperature', 'age', 'Dcon', 'bdot_mean',
         'climate', 'compaction', 'grainsize', 'temp_Hx', 'isotopes', 'BCO',
         'DIPc', 'DIP', 'LWC', 'gasses', 'PLWC_mem', 'viscosity', 'runoff',
-        'refrozen', 'meltoutputs',
+        'refrozen', 'meltoutputs', 'darcy_snapshot',
     },
     'iso': {'d18O', 'dD', 'NoDiffusion'},
     'meltwater_solver': {'enthalpy', 'ahc', 'decp', 'ncz', 'legacy'},
@@ -169,6 +169,7 @@ KNOWN_KEYS = {
     'lat_runoff_darcy', 'slope_proxy_darcy', 'rholim_dcy', 'eps_cvg_darcy',
     'runoff_method_darcy', 'theta_s_factor_darcy',
     'Ksat_darcy', 'Ksat_k0_darcy', 'viscosity_darcy', 'krel_darcy', 'krel_exponent_darcy',
+    'snapshot_fraction_darcy',
     # SEB
     'SEB', 'SEB_TL_thick', 'albedo_factor',
     'SEB_turb_method', 'SEB_roughness_mode', 'SEB_z0m', 'SEB_z0h', 'SEB_z0q',

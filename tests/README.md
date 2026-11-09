@@ -48,6 +48,13 @@ Both front functions take the cold degrees of the firn ahead of the front. They 
 
 `test_darcy_permeability_laws.py` checks the K_sat and k_r laws against values calculated by hand. Its scheme tests show that each of `Ksat_darcy`, `Ksat_k0_darcy`, `viscosity_darcy`, `krel_darcy` and `krel_exponent_darcy` changes the water profile after one call of `darcyscheme`. For all of them except `krel_darcy`, the test also checks the direction: a smaller conductivity keeps the water higher.
 
+`test_darcy_snapshot.py` checks the output `darcy_snapshot`, the state of `darcyscheme` partway through a step (`snapshot_fraction_darcy`).
+
+- The snapshot does not change the run: the end state is the same, bit for bit, with and without it.
+- The snapshot is the end state of a call that stops at `snapshot_time`. With no melt, that call takes the same sub-steps.
+- In a model run, the snapshot is NaN in each step where `darcyscheme` does not run. The test counts the calls with a wrapper of `darcyscheme` in `firn_density_nospin`.
+- Gridded output uses the depth of the snapshot, not the end-of-step depth.
+
 ## Compare two commits
 
 `compare_commits.py` checks that two commits give the same model results. Run it by hand before you close a change that must keep the results. Put the result in the PR description. Commit your work first, because the script reads commits only.

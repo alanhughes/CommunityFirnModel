@@ -15,7 +15,14 @@ import os
 import sys
 
 ### Outputs that are an amount per layer (regridded so that their total is conserved)
-EXTENSIVE_OUTPUTS = ('LWC', 'refrozen', 'compaction', 'PLWC_mem')
+EXTENSIVE_OUTPUTS = ('LWC', 'refrozen', 'compaction', 'PLWC_mem', 'LWC_snapshot')
+
+### Per-node outputs of the 'darcy_snapshot' output: the state partway through the step (see
+### melt.darcyscheme). They are gridded on z_snapshot, not z. 'snapshot_time' is a scalar.
+DARCY_SNAPSHOT_OUTPUTS = ('LWC_snapshot', 'rho_snapshot', 'Tz_snapshot', 'z_snapshot')
+
+### Outputs with one value per write (written as [time, value])
+SCALAR_OUTPUTS = ('refreeze', 'runoff', 'meltvol', 'snapshot_time')
 
 class ModelOutputs:
     '''
@@ -62,13 +69,7 @@ class ModelOutputs:
             elif varname == 'climate':
                 self.Mout_dict[varname] = np.zeros((TWlen+1,6), dtype = self.c['output_bits'])
                 self.Mout_dict[varname][0,:]  = np.append(init_time, MOd[varname])
-            elif varname == 'refreeze':
-                self.Mout_dict[varname] = np.zeros((TWlen+1,2), dtype = self.c['output_bits'])
-                self.Mout_dict[varname][0,:]  = np.append(init_time, MOd[varname])
-            elif varname == 'runoff':
-                self.Mout_dict[varname] = np.zeros((TWlen+1,2), dtype = self.c['output_bits'])
-                self.Mout_dict[varname][0,:]  = np.append(init_time, MOd[varname])
-            elif varname == 'meltvol':
+            elif varname in SCALAR_OUTPUTS:
                 self.Mout_dict[varname] = np.zeros((TWlen+1,2), dtype = self.c['output_bits'])
                 self.Mout_dict[varname][0,:]  = np.append(init_time, MOd[varname])
 
@@ -90,12 +91,15 @@ class ModelOutputs:
             not a value fixed at __init__ - fixes restart-consistency issue
             (see notes, 2026-09-09).
             '''
-            n_pts = int(np.floor((MOd['z'][-1] - MOd['z'][0]) / self.grid_res)) + 1
-            grid_out_i = MOd['z'][0] + np.arange(n_pts) * self.grid_res
+            z = MOd['z_snapshot'] if varname in DARCY_SNAPSHOT_OUTPUTS else MOd['z']
+            if np.isnan(z[0]):  # no snapshot in this step
+                return np.full(self.max_grid_len, np.nan, dtype=self.c['output_bits'])
+            n_pts = int(np.floor((z[-1] - z[0]) / self.grid_res)) + 1
+            grid_out_i = z[0] + np.arange(n_pts) * self.grid_res
             n = len(grid_out_i)
             if n > self.max_grid_len:
                 if not self._truncation_reported:
-                    print(f"Warning: the model domain ({MOd['z'][-1]:.1f} m) is deeper than grid_output_max_depth "
+                    print(f"Warning: the model domain ({z[-1]:.1f} m) is deeper than grid_output_max_depth "
                           f"({self.c['grid_output_max_depth']} m); the gridded outputs are cut off at that depth.")
                     self._truncation_reported = True
                 grid_out_i = grid_out_i[:self.max_grid_len]
@@ -103,12 +107,12 @@ class ModelOutputs:
 
             row = np.full(self.max_grid_len, np.nan, dtype=self.c['output_bits'])
 
-            if varname == 'z':
+            if varname in ('z', 'z_snapshot'):
                 row[:n] = grid_out_i
             elif varname in EXTENSIVE_OUTPUTS:  # amounts per layer: regrid conserving the total
-                row[:n] = self.RGfun(MOd['z'], MOd[varname], grid_out_i, to_bottom=(n_pts <= self.max_grid_len))
+                row[:n] = self.RGfun(z, MOd[varname], grid_out_i, to_bottom=(n_pts <= self.max_grid_len))
             else:
-                Ifun = interpolate.interp1d(MOd['z'], MOd[varname], kind=intkind, fill_value='extrapolate')
+                Ifun = interpolate.interp1d(z, MOd[varname], kind=intkind, fill_value='extrapolate')
                 row[:n] = Ifun(grid_out_i)
 
             return row
@@ -126,7 +130,7 @@ class ModelOutputs:
                     intkind = 'linear'
 
                 if self.MOgrid:
-                    if varname in ('BCO','DIP','climate','runoff','refreeze','meltvol'):
+                    if varname in ('BCO','DIP','climate') + SCALAR_OUTPUTS:
                         self.Mout_dict[varname][Wtracker,:] = np.append(mtime,MOd[varname])
                     else:
                         self.Mout_dict[varname][Wtracker,:] = np.append(mtime, self._build_gridded_row(MOd,varname,intkind))
