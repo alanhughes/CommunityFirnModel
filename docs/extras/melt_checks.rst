@@ -81,3 +81,51 @@ For example, after a call of ``bucket``::
 
 	>>> model.melt_diagnostics['checks']['budget_2']
 	{'ok': True, 'residual': 1.7e-17, 'threshold': 1e-05}
+
+The limit of darcy at thin nodes
+================================
+
+In each sub-step, ``darcyscheme`` computes the flux at each interface as ``qlim*(1-exp(-dtsub*q0/qlim))``, from Hirashima et al. (2010). ``q0`` is the Darcy flux, which follows the permeability. ``qlim`` is the water that brings the two nodes to hydrostatic equilibrium. The sub-step gets shorter when the flux is near ``qlim``, down to **dtmin_darcy**.
+
+Where the limiter acts for a long time, the error is in the water content. Take a steady flux ``R`` through uniform firn, with each sub-step at **dtmin_darcy**. Each sub-step then moves ``R*dtmin_darcy``, and the water content rises until ``qlim`` can carry it. The water content does not follow the permeability, and the wetting front is too slow. ``qlim`` falls with the node thickness, so thinner nodes give a larger error, not a smaller one. A change of a permeability law can then have no effect on the result.
+
+For 400 kg m-3 firn and 1 mm grain radius at the default **dtmin_darcy** of 60 s, the error is more than 4 % below these node thicknesses. The values are calculated from the expression for ``qlim``, and ``test_darcy_front_speed.py`` measures the cases around them.
+
+The thicknesses depend on the irreducible water content :math:`\theta_i`, the volume fraction of water that the firn holds against gravity. Only the water above :math:`\theta_i` can flow, so :math:`\theta_i` changes the effective saturation, the head and ``qlim``. The table uses :math:`\theta_i = 0.02`. To set this value, use **ColeouLesaffre** false and **IrrVal** 0.0387.
+
+**IrrVal** is a fraction of the pore space, not a volume fraction of the node. The pore space, as a volume of water per volume of firn, is
+
+.. math::
+
+   \phi \frac{\rho_i}{\rho_w}, \qquad \phi = 1 - \frac{\rho}{\rho_i}.
+
+At :math:`\rho` = 400 kg m-3, :math:`\phi` = 0.5638 and the pore space is 0.5170. So :math:`\theta_i = 0.02` needs **IrrVal** = 0.02 / 0.5170 = 0.0387.
+
+The default is **ColeouLesaffre** true. :math:`\theta_i` then follows Coléou and Lesaffre (1998), in the form of Langen et al. (2017), Eqs. 3-4. The irreducible water as a mass fraction of the wet firn is
+
+.. math::
+
+   W_{mi} = 0.057 \frac{\rho_i - \rho}{\rho} + 0.017.
+
+As a fraction of the pore space, this is
+
+.. math::
+
+   S_{wi} = \frac{W_{mi}}{1 - W_{mi}} \frac{\rho_i \rho}{\rho_w (\rho_i - \rho)},
+
+and :math:`\theta_i = S_{wi}\,\phi\,\rho_i/\rho_w`. At :math:`\rho` = 400 kg m-3, :math:`W_{mi}` = 0.0907, :math:`S_{wi}` = 0.0707 and :math:`\theta_i` = 0.0366. That is almost twice the value of the table. So with the default, the node thicknesses differ from the table. They are not calculated here.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 50
+
+   * - Flux (m s-1)
+     - Node thickness (mm)
+   * - 5e-8
+     - 4
+   * - 5e-7
+     - 12
+   * - 1e-6
+     - 16
+
+A shorter **dtmin_darcy** moves these thicknesses down, and a run then needs more sub-steps. To see if the limit acts in a run, compare it with a run at a shorter **dtmin_darcy**.

@@ -38,6 +38,13 @@ An oracle is a function in the test code that gives the exact answer to a simpli
 
 Both front functions take the cold degrees of the firn ahead of the front. They raise `ValueError` if the pores freeze shut, or if the law cannot carry the flux. `test_oracles.py` checks them against values calculated by hand.
 
+`test_darcy_front_speed.py` compares `darcyscheme` with `solve_front`, for rain on dry firn at the melting temperature, with the flux law of the scheme. It calls `darcyscheme` directly, and it also counts the sub-steps that spread the input below the top node. To count them, it reads `i_input_bottom` from the frame that calls `vG_Yama_params`. So a new name for `i_input_bottom` fails the test with a `KeyError`.
+
+- The plateau behind the front is the test of the law, because mass balance gives the speed from the plateau.
+- The tolerance is 4 % at the default sub-steps. With a short fixed sub-step, the tolerance on the plateau is 0.5 %.
+- The cases at thin nodes are strict `xfail` tests. There the sub-step stops at `dtmin_darcy`, and `qlim` sets the flux. Other tests show the cause, so change them with the fix.
+- Two tests multiply K_sat by 10 in the scheme. At resolved nodes the plateau follows the law. At thin nodes it does not change, because the limiter caps the flux.
+
 ## Compare two commits
 
 `compare_commits.py` checks that two commits give the same model results. Run it by hand before you close a change that must keep the results. Put the result in the PR description. Commit your work first, because the script reads commits only.

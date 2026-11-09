@@ -240,7 +240,10 @@ bucket scheme, see :doc:`bucket_scheme`) are also read by this scheme.
    * - **dtmax_darcy**
      - Maximum internal sub-step size.
    * - **dtsub_darcy**
-     - Initial internal sub-step size (adapted iteratively thereafter).
+     - Initial internal sub-step size. Each call of the scheme, that is each
+       model time step, starts again at this value. The adaptive control then
+       changes it. **dtmin_darcy** and **dtmax_darcy** do not bound this first
+       sub-step, so it is **dtsub_darcy** even outside those limits.
    * - **RhoImp_darcy**
      - Density threshold above which a node is part of an impermeable ice
        lens. Must be less than **rholim_dcy**.
