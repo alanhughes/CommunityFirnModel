@@ -10,7 +10,7 @@ The limits of the numerics are in the tests:
 - The sub-step control keeps qstep/qlim up to 0.75, so qstep/dtsub is below the law. The plateau
   is then a few percent above the oracle, at any node thickness. A short fixed sub-step removes
   this difference, so the law itself is correct.
-- At thin nodes, the sub-step stops at darcy_dtmin. Then qlim sets the flux, and the plateau rises
+- At thin nodes, the sub-step stops at dtmin_darcy. Then qlim sets the flux, and the plateau rises
   until qlim carries the input. The error grows as the nodes get thinner.
 '''
 
@@ -33,6 +33,8 @@ THETA_IRREDUCIBLE = 0.02
 CONSTANTS = FirnConstants(rho_ice=917.0, rho_water=1000.0, specific_heat=2097.0, latent_heat=334000.0)
 POROSITY = 1 - DENSITY / 917.0
 THETA_S = THETA_S_FACTOR * POROSITY - 1e-6
+# darcyscheme reads IrrVal as a fraction of the pore space, POROSITY * 917 / 1000 of the volume.
+IRR_VAL = THETA_IRREDUCIBLE / (POROSITY * 0.917)
 CALLS = 24  # calls of darcyscheme in a run
 
 TOLERANCE = 0.04  # default sub-steps. It holds the largest difference in RESOLVED, 3.6 %
@@ -84,17 +86,18 @@ def _plateau(theta, plateau_guess):
 def run_front(monkeypatch, synthetic_column, flux, dz, duration, calls=CALLS, **config):
     '''Call darcyscheme in a loop. flux is in m w.e. s-1.'''
     dt = duration / calls
+    config = {'ColeouLesaffre': False, 'IrrVal': IRR_VAL, **config}
     front = oracle(flux)
     n = int(1.5 * front.speed * duration / dz) + 30
     column = synthetic_column(n=n, rho_profile=DENSITY, T_profile=273.15, dz=dz, r2=RADIUS ** 2,
                               rain=flux * dt / 0.917, dt=dt, config=config)
 
     # darcyscheme calls vG_Yama_params once in each sub-step, after it places the input.
-    # So its caller holds i_inp, the lowest node that receives the input in this sub-step.
+    # So its caller holds i_input_bottom, the lowest node that receives the input in this sub-step.
     input_nodes = []
 
     def vG_Yama_params_and_record(*args):
-        input_nodes.append(sys._getframe(1).f_locals['i_inp'])
+        input_nodes.append(sys._getframe(1).f_locals['i_input_bottom'])
         return vG_Yama_params(*args)
 
     monkeypatch.setattr(melt, 'vG_Yama_params', vG_Yama_params_and_record)
@@ -133,7 +136,7 @@ def test_front_matches_oracle(monkeypatch, synthetic_column, flux, dz, days):
 
 
 @pytest.mark.scheme
-@pytest.mark.xfail(strict=True, reason='at thin nodes the sub-step stops at darcy_dtmin, and qlim sets the flux')
+@pytest.mark.xfail(strict=True, reason='at thin nodes the sub-step stops at dtmin_darcy, and qlim sets the flux')
 @pytest.mark.parametrize('flux, dz, days', THIN)
 def test_front_matches_oracle_at_thin_nodes(monkeypatch, synthetic_column, flux, dz, days):
     assert_matches_oracle(run_front(monkeypatch, synthetic_column, flux, dz, days * DAY), flux)
@@ -167,16 +170,17 @@ def test_spread_count_sees_a_large_input(monkeypatch, synthetic_column):
 @pytest.mark.parametrize('flux, dz, days, dtsub', [(5e-8, 0.02, 2.5, 60.0), (1e-6, 0.02, 0.125, 5.0)])
 def test_short_fixed_substep_gives_the_law(monkeypatch, synthetic_column, flux, dz, days, dtsub):
     '''With qstep well below qlim, the plateau is the root of the law.'''
-    run = run_front(monkeypatch, synthetic_column, flux, dz, days * DAY, darcy_dtmin=dtsub, darcy_dtmax=dtsub)
+    run = run_front(monkeypatch, synthetic_column, flux, dz, days * DAY, dtmin_darcy=dtsub, dtmax_darcy=dtsub)
     assert run.plateau == pytest.approx(oracle(flux).water_behind, rel=TOLERANCE_SHORT_STEP)
 
 
 @pytest.mark.scheme
 def test_shorter_dtmin_recovers_thin_nodes(monkeypatch, synthetic_column):
-    '''The same column as the worst thin case, with a shorter darcy_dtmin. So the floor causes the error.'''
+    '''The same column as the worst thin case, with a shorter dtmin_darcy. So the floor causes the error.'''
     flux, dz = 1e-6, 0.004
-    # Calls of one hour, because the first sub-step of each call is always 60 s.
-    run = run_front(monkeypatch, synthetic_column, flux, dz, 0.125 * DAY, calls=3, darcy_dtmin=1.0)
+    # Calls of one hour. Each call starts at dtsub_darcy (60 s in the base config), and
+    # dtmin_darcy does not bound that first sub-step. So short calls keep part of the error.
+    run = run_front(monkeypatch, synthetic_column, flux, dz, 0.125 * DAY, calls=3, dtmin_darcy=1.0)
     assert_matches_oracle(run, flux)
 
 
