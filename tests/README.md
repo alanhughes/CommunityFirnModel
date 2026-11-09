@@ -44,6 +44,9 @@ Both front functions take the cold degrees of the firn ahead of the front. They 
 - The tolerance is 4 % at the default sub-steps. With a short fixed sub-step, the tolerance on the plateau is 0.5 %.
 - The cases at thin nodes are strict `xfail` tests. There the sub-step stops at `dtmin_darcy`, and `qlim` sets the flux. Other tests show the cause, so change them with the fix.
 - Two tests multiply K_sat by 10 in the scheme. At resolved nodes the plateau follows the law. At thin nodes it does not change, because the limiter caps the flux.
+- The last tests set `Ksat_darcy` and `krel_darcy`, at 20 mm nodes. With both laws at `power_law` (n = 2), `viscosity_darcy` 1e-3 and the paper settings (`ColeouLesaffre` false, `IrrVal` 0, `theta_s_factor_darcy` 1), the oracle is `power_law_front`. With short fixed sub-steps the tolerance is 0.5 %. At the default sub-steps the plateau is 6.7 % high, because with k_r = S² the plateau goes as the square root of the flux. One mixed case, the power law for K_sat with the van Genuchten k_r, uses `solve_front`.
+
+`test_darcy_permeability_laws.py` checks the K_sat and k_r laws against values calculated by hand. Its scheme tests show that each of `Ksat_darcy`, `Ksat_k0_darcy`, `viscosity_darcy`, `krel_darcy` and `krel_exponent_darcy` changes the water profile after one call of `darcyscheme`. For all of them except `krel_darcy`, the test also checks the direction: a smaller conductivity keeps the water higher.
 
 ## Compare two commits
 

@@ -8,9 +8,13 @@ Functions required for the Darcy-type liquid water flow scheme
 import numpy as np
 from constants import *
 
-def hydrconducsat_Calonne(rad, rho):
+def hydrconducsat_Calonne(rad, rho, mu=0.001792):
     '''
     Saturated hydraulic conductivity, following Calonne et al., Eq. (6).
+
+    The permeability is 3 r^2 exp(-0.013 rho). The conductivity is the
+    permeability times rho_w g / mu. This is option "Calonne" of the config
+    key Ksat_darcy.
 
     Parameters
     ----------
@@ -18,14 +22,45 @@ def hydrconducsat_Calonne(rad, rho):
         Grain radius [m].
     rho : ndarray
         Node density [kg m-3].
+    mu : float
+        Dynamic viscosity of water [Pa s]. The default is the value at
+        273.15 K, the value of the config key viscosity_darcy.
 
     Returns
     -------
     bigksat : ndarray
         Saturated hydraulic conductivity [m s-1].
     '''
-    mu = 0.001792   # dynamic viscosity of water at 273.15 K [kg m-1 s-1]
     bigksat = 3 * (rad)**2 * RHO_W_KGM * GRAVITY / mu * np.exp(-0.013 * rho)   # [m s-1]
+    return bigksat
+
+def hydrconducsat_power_law(phi, k0, mu):
+    '''
+    Saturated hydraulic conductivity from a power law of the porosity,
+    k0 phi^3 rho_w g / mu, as in Meyer and Hewitt (2017) and Shadab et al.
+    (2025, Eq. 12). This is option "power_law" of the config key Ksat_darcy.
+
+    The law has no grain size. It is zero only at zero porosity.
+
+    Parameters
+    ----------
+    phi : ndarray
+        Porosity [-].
+    k0 : float
+        Permeability at unit porosity [m2], the config key Ksat_k0_darcy.
+        Meyer and Hewitt (2017, Table 1) give 5.6e-11 m2, and Shadab et al.
+        (2025, Table 1) give 5.56e-11 m2.
+    mu : float
+        Dynamic viscosity of water [Pa s], the config key viscosity_darcy.
+        The papers use 1e-3 Pa s. Water at 273.15 K has 1.792e-3 Pa s.
+
+    Returns
+    -------
+    bigksat : ndarray
+        Saturated hydraulic conductivity [m s-1]. It is zero where phi <= 0,
+        for example at a density above RHO_I if rholim_dcy is above RHO_I.
+    '''
+    bigksat = k0 * np.maximum(phi, 0.)**3 * RHO_W_KGM * GRAVITY / mu   # [m s-1]
     return bigksat
 
 def vG_Yama(rad,rho,thetaeff):
@@ -226,6 +261,27 @@ def krel_vG(m, thetaeff):
         Eq. 10).
     '''
     bigkrel = thetaeff**(1 / 2) * (1 - (1 - thetaeff**(1 / m))**m)**2   # Hirashima et al. (2010), Eq. 10
+    return bigkrel
+
+def krel_power_law(thetaeff, n):
+    '''
+    Relative hydraulic conductivity as a power of the effective saturation,
+    thetaeff^n. Meyer and Hewitt (2017) and Shadab et al. (2025) use n = 2.
+    This is option "power_law" of the config key krel_darcy.
+
+    Parameters
+    ----------
+    thetaeff : ndarray
+        Effective water saturation [-], 0-1.
+    n : float
+        Exponent [-], the config key krel_exponent_darcy.
+
+    Returns
+    -------
+    bigkrel : ndarray
+        Relative hydraulic conductivity [-], 0-1.
+    '''
+    bigkrel = thetaeff**n
     return bigkrel
 
 def dfdg_derivative(th_sfull, th_ifull, th_efull, alphafull, nfull, mfull, dzfull):

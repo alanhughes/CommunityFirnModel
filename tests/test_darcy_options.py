@@ -27,8 +27,10 @@ def solver_calls(monkeypatch):
 
 
 def _wet_cold_column(synthetic_column, **config):
-    # Melt on a cold column with water flowing down through it.
-    return synthetic_column(n=80, rho_profile=lambda z: 350.0 + 60.0 * z, T_profile=268.15, melt=0.03, config=config)
+    # Melt on a cold column with water flowing down through it. The column sets all the options,
+    # so that a test can remove one of them.
+    return synthetic_column(n=80, rho_profile=lambda z: 350.0 + 60.0 * z, T_profile=268.15, melt=0.03,
+                            config={**melt._DARCY_DEFAULTS, **config})
 
 
 @pytest.mark.scheme
