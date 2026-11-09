@@ -992,7 +992,7 @@ dtmax_darcy
 
 dtsub_darcy
 -----------
-  Starting internal time step for the Darcy routine, before adaptive sub-stepping adjusts it. The code does not limit this first sub-step, so **dtmin_darcy** and **dtmax_darcy** apply from the second sub-step. The last sub-step of a call can be shorter than **dtmin_darcy**. If the two limits conflict, **dtmax_darcy** wins.
+  Starting internal time step for the Darcy routine, before adaptive sub-stepping adjusts it. Each call of the routine, that is each model time step, starts again at this value. The code does not limit this first sub-step, so **dtmin_darcy** and **dtmax_darcy** apply from the second sub-step. The last sub-step of a call can be shorter than **dtmin_darcy**. If the two limits conflict, **dtmax_darcy** wins.
 
   :type: ``float``
   :default: ``60``
