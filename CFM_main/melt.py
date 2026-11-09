@@ -7,9 +7,11 @@ import sys
 from diffusion import heatDiff
 
 from darcy_funcs import hydrconducsat_Calonne
+from darcy_funcs import hydrconducsat_power_law
 from darcy_funcs import vG_Yama_params
 from darcy_funcs import phead_vG
 from darcy_funcs import krel_vG
+from darcy_funcs import krel_power_law
 from darcy_funcs import thetae_update
 from darcy_funcs import thetaeff_equaliser
 from darcy_funcs import dfdg_derivative
@@ -978,7 +980,11 @@ _DARCY_DEFAULTS = {
     'dtmin_darcy': 60, 'dtmax_darcy': 3600, 'dtsub_darcy': 60., 'RhoImp_darcy': 873., 'ThickImp_darcy': 0.5,
     'lat_runoff_darcy': True, 'slope_proxy_darcy': 0.02, 'rholim_dcy': 910., 'eps_cvg_darcy': 0.1e-3,
     'runoff_method_darcy': 'Darcy', 'ColeouLesaffre': True, 'IrrVal': 0.02, 'theta_s_factor_darcy': RHO_I_MGM,
+    'Ksat_darcy': 'Calonne', 'Ksat_k0_darcy': 5.56e-11, 'viscosity_darcy': 0.001792,
+    'krel_darcy': 'vanGenuchten', 'krel_exponent_darcy': 2.,
 }  # the values the scheme used before these options were configurable
+_KSAT_LAWS_DARCY = ('Calonne', 'power_law')        # values of Ksat_darcy
+_KREL_LAWS_DARCY = ('vanGenuchten', 'power_law')   # values of krel_darcy
 _darcy_missing_reported = set()
 
 def _darcy_option(config, key):
@@ -1088,6 +1094,32 @@ def darcyscheme(self,iii):
     theta_s_factor_darcy : float
         Fraction of the porosity that water can fill at saturation. The default
         is the value of RHO_I_MGM.
+    Ksat_darcy : str
+        Law for the saturated hydraulic conductivity. "Calonne" (default):
+        Calonne et al. (2012), 3 r^2 exp(-0.013 rho) rho_w g / mu, with the
+        grain radius. "power_law": k0 phi^3 rho_w g / mu, as in Meyer and
+        Hewitt (2017), with no grain size. Both use the capped density
+        (`rholim_dcy`). At the default cap of 910 kg m-3, "power_law"
+        gives about 1e-10 m s-1 and "Calonne" about 3e-5 m s-1 (radius
+        0.5 mm), so a lens is almost closed with "power_law".
+    Ksat_k0_darcy : float [m2]
+        k0 of the "power_law" option, the permeability at unit porosity.
+        Default 5.56e-11 (Shadab et al., 2025, Table 1).
+    viscosity_darcy : float [Pa s]
+        Dynamic viscosity of water, in both Ksat_darcy options. Default
+        1.792e-3, the value at 273.15 K. Meyer and Hewitt (2017) use 1e-3.
+    krel_darcy : str
+        Law for the relative hydraulic conductivity, a function of the
+        effective saturation theta_e. "vanGenuchten" (default): van
+        Genuchten-Mualem (Hirashima et al., 2010, Eq. 10). "power_law":
+        theta_e^n. The pressure head stays van Genuchten in both cases.
+    krel_exponent_darcy : float
+        n of the "power_law" option. Default 2 (Meyer and Hewitt, 2017).
+
+    With Ksat_darcy and krel_darcy at "power_law", the flux law is that of
+    Meyer and Hewitt (2017) only if theta_e is their saturation phi_w/phi.
+    That needs ColeouLesaffre false, IrrVal 0 and theta_s_factor_darcy 1
+    ("paper settings").
 
     References
     ----------
@@ -1154,7 +1186,16 @@ def darcyscheme(self,iii):
     ColeouLesaffre  = _darcy_option(self.c, 'ColeouLesaffre')       # reuses the same flag as bucket()
     IrrVal          = _darcy_option(self.c, 'IrrVal') if not ColeouLesaffre else 0.
     theta_s_factor  = _darcy_option(self.c, 'theta_s_factor_darcy') # fraction of the porosity that water can fill at saturation
+    Ksat_law        = _darcy_option(self.c, 'Ksat_darcy')           # law for the saturated hydraulic conductivity
+    Ksat_k0         = _darcy_option(self.c, 'Ksat_k0_darcy')        # [m2] permeability at unit porosity, power_law only
+    viscosity       = _darcy_option(self.c, 'viscosity_darcy')      # [Pa s] dynamic viscosity of water
+    krel_law        = _darcy_option(self.c, 'krel_darcy')           # law for the relative hydraulic conductivity
+    krel_exponent   = _darcy_option(self.c, 'krel_exponent_darcy')  # exponent of theta_e, power_law only
     ### END USER CHOICES ###
+    if Ksat_law not in _KSAT_LAWS_DARCY:
+        raise ValueError(f'Ksat_darcy is "{Ksat_law}". It must be one of {_KSAT_LAWS_DARCY}.')
+    if krel_law not in _KREL_LAWS_DARCY:
+        raise ValueError(f'krel_darcy is "{krel_law}". It must be one of {_KREL_LAWS_DARCY}.')
 
     ### Surface fluxes ###
     melt_mass_tot = self.snowmeltSec[iii] * S_PER_YEAR * RHO_I       # total melt over the Darcy routine [kg]
@@ -1312,8 +1353,14 @@ def darcyscheme(self,iii):
         theta_e = np.minimum(1 - stab_e, theta_e)        # avoid effective saturation equal to 1
 
         avG, nvG, mvG = vG_Yama_params(rg, rhodcy)       # van Genuchten shape parameters (alpha, n, m)
-        bigk_s = hydrconducsat_Calonne(rg, rhodcy)       # hydraulic conductivity at saturation [m s-1]
-        bigk_r = krel_vG(mvG, theta_e)                   # relative hydraulic conductivity
+        if Ksat_law == 'Calonne':
+            bigk_s = hydrconducsat_Calonne(rg, rhodcy, viscosity)            # hydraulic conductivity at saturation [m s-1]
+        else:
+            bigk_s = hydrconducsat_power_law(phidcy, Ksat_k0, viscosity)     # hydraulic conductivity at saturation [m s-1]
+        if krel_law == 'vanGenuchten':
+            bigk_r = krel_vG(mvG, theta_e)                   # relative hydraulic conductivity
+        else:
+            bigk_r = krel_power_law(theta_e, krel_exponent)  # relative hydraulic conductivity
         bigk   = bigk_r * bigk_s                          # hydraulic conductivity, Hirashima (2010) Eq. (11) [m s-1]
         bigk_d = np.append(bigk[1:], 0)                  # hydraulic conductivity staggered down (next node's value)
 

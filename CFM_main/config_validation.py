@@ -93,6 +93,8 @@ ALLOWED_VALUES = {
     },
     'iso': {'d18O', 'dD', 'NoDiffusion'},
     'meltwater_solver': {'enthalpy', 'ahc', 'decp', 'ncz', 'legacy'},
+    'Ksat_darcy': {'Calonne', 'power_law'},
+    'krel_darcy': {'vanGenuchten', 'power_law'},
 }
 
 # Keys that hold lists whose elements are validated against ALLOWED_VALUES.
@@ -166,6 +168,7 @@ KNOWN_KEYS = {
     'dtmin_darcy', 'dtmax_darcy', 'dtsub_darcy', 'RhoImp_darcy', 'ThickImp_darcy',
     'lat_runoff_darcy', 'slope_proxy_darcy', 'rholim_dcy', 'eps_cvg_darcy',
     'runoff_method_darcy', 'theta_s_factor_darcy',
+    'Ksat_darcy', 'Ksat_k0_darcy', 'viscosity_darcy', 'krel_darcy', 'krel_exponent_darcy',
     # SEB
     'SEB', 'SEB_TL_thick', 'albedo_factor',
     'SEB_turb_method', 'SEB_roughness_mode', 'SEB_z0m', 'SEB_z0h', 'SEB_z0q',

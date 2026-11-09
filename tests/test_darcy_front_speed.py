@@ -12,6 +12,9 @@ The limits of the numerics are in the tests:
   this difference, so the law itself is correct.
 - At thin nodes, the sub-step stops at dtmin_darcy. Then qlim sets the flux, and the plateau rises
   until qlim carries the input. The error grows as the nodes get thinner.
+
+The last tests change the laws with Ksat_darcy and krel_darcy, at resolved nodes. With the two power
+laws at the paper settings, the oracle is the closed form of Meyer and Hewitt (2017).
 '''
 
 import sys
@@ -22,8 +25,8 @@ import pytest
 from scipy.optimize import brentq
 
 import melt
-from darcy_funcs import hydrconducsat_Calonne, krel_vG, phead_vG, vG_Yama_params
-from oracles.kinematic_wave import FirnConstants, solve_front
+from darcy_funcs import hydrconducsat_Calonne, hydrconducsat_power_law, krel_vG, phead_vG, vG_Yama_params
+from oracles.kinematic_wave import FirnConstants, power_law_front, solve_front
 
 DAY = 86400.0
 DENSITY = 400.0
@@ -83,11 +86,14 @@ def _plateau(theta, plateau_guess):
     return float(np.mean(theta[last_wet // 4:3 * last_wet // 4 + 1]))
 
 
-def run_front(monkeypatch, synthetic_column, flux, dz, duration, calls=CALLS, **config):
-    '''Call darcyscheme in a loop. flux is in m w.e. s-1.'''
+def run_front(monkeypatch, synthetic_column, flux, dz, duration, calls=CALLS, front=None, **config):
+    '''
+    Call darcyscheme in a loop. flux is in m w.e. s-1. front is the oracle for the laws of config,
+    by default the oracle for the default laws. It sets the column length and the plateau guess.
+    '''
     dt = duration / calls
     config = {'ColeouLesaffre': False, 'IrrVal': IRR_VAL, **config}
-    front = oracle(flux)
+    front = front or oracle(flux)
     n = int(1.5 * front.speed * duration / dz) + 30
     column = synthetic_column(n=n, rho_profile=DENSITY, T_profile=273.15, dz=dz, r2=RADIUS ** 2,
                               rain=flux * dt / 0.917, dt=dt, config=config)
@@ -118,8 +124,8 @@ def run_front(monkeypatch, synthetic_column, flux, dz, duration, calls=CALLS, **
                     substeps=len(input_nodes), substeps_spread=sum(node > 0 for node in input_nodes))
 
 
-def assert_matches_oracle(run, flux, tolerance=TOLERANCE):
-    front = oracle(flux)
+def assert_matches_oracle(run, flux, tolerance=TOLERANCE, front=None):
+    front = front or oracle(flux)
     assert run.plateau == pytest.approx(front.water_behind, rel=tolerance)
     assert run.speed == pytest.approx(front.speed, rel=tolerance)
 
@@ -234,3 +240,59 @@ def test_ten_times_k_has_no_effect_at_thin_nodes(monkeypatch, synthetic_column):
     base = run_front(monkeypatch, synthetic_column, flux, dz, days * DAY)
     changed = run_with_ten_times_k(monkeypatch, synthetic_column, flux, dz, days)
     assert changed.plateau == pytest.approx(base.plateau, rel=1e-3)
+
+
+# The laws of Meyer and Hewitt (2017) need theta_e to be their saturation phi_w/phi.
+PAPER_SETTINGS = {'ColeouLesaffre': False, 'IrrVal': 0.0, 'theta_s_factor_darcy': 1.0}
+PAPER_VISCOSITY = 1e-3  # [Pa s]
+K0 = 5.56e-11  # [m2], the default of Ksat_k0_darcy
+POWER_LAWS = {'Ksat_darcy': 'power_law', 'Ksat_k0_darcy': K0, 'viscosity_darcy': PAPER_VISCOSITY,
+              'krel_darcy': 'power_law', 'krel_exponent_darcy': 2}
+
+
+TOLERANCE_POWER_LAWS = 0.08  # default sub-steps. The largest difference is 6.7 %
+
+
+def meyer_hewitt_front(flux):
+    '''K = k0 phi^3 rho_w g / mu times S^2. The closed form gives S = (R / (K phi^3))^(1/2).'''
+    return power_law_front(flux, float(hydrconducsat_power_law(1.0, K0, PAPER_VISCOSITY)), POROSITY, CONSTANTS)
+
+
+@pytest.mark.scheme
+@pytest.mark.parametrize('flux, days, dtsub', [(5e-8, 2.5, 60.0), (5e-7, 0.5, 10.0), (1e-6, 0.25, 5.0)])
+def test_front_matches_meyer_hewitt_with_their_laws(monkeypatch, synthetic_column, flux, days, dtsub):
+    '''With short fixed sub-steps, the plateau and the speed are those of the closed form.'''
+    front = meyer_hewitt_front(flux)
+    run = run_front(monkeypatch, synthetic_column, flux, 0.02, days * DAY, front=front, dtmin_darcy=dtsub,
+                    dtmax_darcy=dtsub, dtsub_darcy=dtsub, **PAPER_SETTINGS, **POWER_LAWS)
+    assert_matches_oracle(run, flux, tolerance=TOLERANCE_SHORT_STEP, front=front)
+
+
+@pytest.mark.scheme
+def test_power_laws_with_default_substeps(monkeypatch, synthetic_column):
+    '''
+    The sub-step control keeps the flux below the law, as for the default laws. With k_r = S^2 the
+    plateau goes as the square root of the flux, so the same shortfall gives a larger plateau error.
+    '''
+    flux = 5e-7
+    front = meyer_hewitt_front(flux)
+    run = run_front(monkeypatch, synthetic_column, flux, 0.02, DAY, front=front, **PAPER_SETTINGS, **POWER_LAWS)
+    assert_matches_oracle(run, flux, tolerance=TOLERANCE_POWER_LAWS, front=front)
+    assert run.plateau > front.water_behind
+
+
+@pytest.mark.scheme
+def test_front_matches_the_root_solve_with_mixed_laws(monkeypatch, synthetic_column):
+    '''The power law for K_sat with the van Genuchten k_r, at the paper settings.'''
+    flux, days = 5e-7, 2.5
+    theta_s = POROSITY - 1e-6
+    m = vG_Yama_params(RADIUS, DENSITY)[2]
+    k_sat = float(hydrconducsat_power_law(POROSITY, K0, PAPER_VISCOSITY))
+
+    def mixed_law(theta, porosity):
+        return k_sat * float(krel_vG(m, np.clip(theta / theta_s, 1e-9, 1 - 1e-9)))
+
+    front = solve_front(mixed_law, flux, POROSITY, CONSTANTS)
+    run = run_front(monkeypatch, synthetic_column, flux, 0.02, days * DAY, front=front, **PAPER_SETTINGS,
+                    Ksat_darcy='power_law', Ksat_k0_darcy=K0, viscosity_darcy=PAPER_VISCOSITY)
+    assert_matches_oracle(run, flux, front=front)
