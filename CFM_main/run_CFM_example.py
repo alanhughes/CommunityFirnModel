@@ -39,6 +39,16 @@ This file configures a CFM run and then runs it.
 where LAT,LON are your latitude and longitude, e.g. "66.5,-46.25" or "72.5,-38.75"
 (include the quote marks when invoking the above call)
 
+- SIGN CONVENTIONS of the forcing (see "Sign conventions of the forcing" in the documentation):
+    - the surface energy fluxes QH and QL must be positive INTO the snow. MERRA-2 HFLUX and EFLUX
+      are positive UPWARD, so MERRA2_zarr_to_dataframe multiplies them by -1. (ERA5 sensible and
+      latent heat fluxes are positive downward and need no change.) If you make your own dataframe
+      from MERRA-2 and forget this, the model prints a warning when it sets up the SEB.
+    - SUBLIM is negative for sublimation (mass loss). MERRA-2 EVAP is positive upward, so
+      MERRA2_zarr_to_dataframe multiplies it by -1 as well. (Before CFM 4.1.0 the sign was changed
+      here after makeSpinFiles, which made the spin-up length use the wrong sign; the example
+      dataframes now already have the CFM sign.)
+
 - Forcing data:
     - this example file uses a pickled dataframe with climate data (MERRA-2) for DYE-2 to force the CFM
     - these climate data come from a zarr store with MERRA-2 climate data
@@ -85,6 +95,7 @@ zarr_path = Path('/Path/To/zarr')
 sys.path.append(str(cfm_path))
 
 from firn_density_nospin import FirnDensityNoSpin
+from config_loader import load_config
 import RCMpkl_to_spin as RCM
 
 ##########
@@ -100,7 +111,8 @@ def MERRA2_zarr_to_dataframe(lat_int,lon_int, zarr_path=None):
     mass fluxes in df_daily are in kg/m2/timestep
     energy fluxes are W/m2
     
-    in MERRA, ?positive? sublimation flux = sublimation, ?negative? = deposition
+    in MERRA, positive EVAP = sublimation (upward), negative = deposition. The returned SUBLIM is
+    in the CFM convention (negative = sublimation), i.e. -1 * EVAP.
     '''
     def make_dataframe(dsZ,lat_int,lon_int):
             lat_ll = dsZ.lat.data
@@ -141,8 +153,11 @@ def MERRA2_zarr_to_dataframe(lat_int,lon_int, zarr_path=None):
             
     df_out = pd.concat(df_dict.values())
 
+    ### MERRA-2 HFLUX, EFLUX and EVAP are positive UPWARD. The CFM wants QH and QL positive INTO the snow
+    ### and SUBLIM negative for sublimation, so all three are multiplied by -1.
     df_out['QL'] = -1 * df_out['QL']
     df_out['QH'] = -1 * df_out['QH']
+    df_out['SUBLIM'] = -1 * df_out['SUBLIM']
 
     return ii,jj,lat_val,lon_val,df_out
 
@@ -243,9 +258,7 @@ class M2_CFM():
 
         config_in = 'example_df.json' # This is an example .json with defaults loaded in it.
 
-        with open(config_in, "r") as f:
-            jsonString      = f.read()
-            c          = json.loads(jsonString) 
+        c = load_config(config_in)
 
         c['physRho'] = 'GSFC2020'
         c['runID'] = runid
@@ -294,8 +307,6 @@ class M2_CFM():
         climateTS, StpsPerYr, depth_S1, depth_S2, grid_bottom, SEBfluxes = (
             RCM.makeSpinFiles(df_daily,timeres=c['DFresample'],Tinterp='mean',spin_date_st = sds, 
             spin_date_end = sde,melt=c['MELT'],desired_depth = None,SEB=seb,rho_bottom=900))
-
-        climateTS['SUBLIM'] = -1 * climateTS['SUBLIM'] #ADDED THIS FOR MERRA2 TO GET THE SIGN CORRECT.
 
         climateTS['forcing_data_start'] = sds
 

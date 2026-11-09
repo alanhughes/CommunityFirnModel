@@ -4,7 +4,7 @@ import os
 
 HERE = pathlib.Path(__file__).parent
 
-VERSION = '1.1.9'
+VERSION = '4.1.0'
 PACKAGE_NAME = 'CommunityFirnModel'
 AUTHOR = 'Max Stevens'
 AUTHOR_EMAIL = 'maxstev@umd.edu'
@@ -40,7 +40,7 @@ setup(name=PACKAGE_NAME,
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent"],
-      python_requires='>=3.6',
+      python_requires='>=3.11',
       packages=find_packages()
       )
 

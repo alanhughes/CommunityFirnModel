@@ -28,13 +28,22 @@ def _melt_step(synthetic_column, scheme, **overrides):
 
 
 @pytest.mark.scheme
-@pytest.mark.parametrize('scheme', ['bucket', 'darcyscheme'])
-def test_sum_is_column_total_with_melt_removal(synthetic_column, scheme):
-    column, refreeze_total = _melt_step(synthetic_column, scheme)
+def test_bucket_sum_is_column_total_with_melt_removal(synthetic_column):
+    column, refreeze_total = _melt_step(synthetic_column, 'bucket')
     assert refreeze_total > 0.0
     assert column.refrozen.shape == column.dz.shape
     assert column.refrozen.sum() == pytest.approx(refreeze_total, rel=1e-12)
     assert column.refrozen.min() >= 0.0
+
+
+@pytest.mark.scheme
+def test_darcy_sum_leaves_out_the_refreeze_of_melted_nodes(synthetic_column):
+    # The first sub-step refreezes water in the top nodes. The later sub-steps melt
+    # those nodes. The column total counts this refreeze, and self.refrozen does not.
+    column, refreeze_total = _melt_step(synthetic_column, 'darcyscheme')
+    assert column.refrozen.shape == column.dz.shape
+    assert column.refrozen.min() >= 0.0
+    assert 0.0 < column.refrozen.sum() < refreeze_total
 
 
 @pytest.mark.scheme
@@ -46,16 +55,6 @@ def test_refrozen_is_mass_gain_of_each_node(synthetic_column, scheme):
     mass_gain = column.mass - DENSITY * column.dz
     assert column.refrozen[1:] * 1000.0 == pytest.approx(mass_gain[1:], abs=1e-8)
     assert np.any(column.refrozen[1:] > 0.0)
-
-
-@pytest.mark.scheme
-def test_darcy_moves_refreeze_of_melted_nodes_to_top_node(synthetic_column):
-    # The first sub-step refreezes water in the top nodes. The later sub-steps melt
-    # those nodes. Their refreeze is then in the new top node, beyond the mass gain.
-    column, refreeze_total = _melt_step(synthetic_column, 'darcyscheme')
-    top_node_mass_gain = column.mass[0] - DENSITY * column.dz[0]
-    assert column.refrozen[0] * 1000.0 > top_node_mass_gain + 1e-6
-    assert column.refrozen[1:].sum() < refreeze_total
 
 
 @pytest.mark.scheme
@@ -104,7 +103,7 @@ def test_darcy_with_only_rain_keeps_node_order(synthetic_column):
 
 
 @pytest.mark.unit
-def test_sublim_moves_refreeze_of_removed_nodes_to_top_node(synthetic_column):
+def test_sublim_shifts_the_refreeze_and_keeps_the_bottom_node(synthetic_column):
     column = synthetic_column(n=N_NODES, rho_profile=DENSITY, dz=NODE_THICKNESS)
     column.MELT = True
     column.PLWC_mem = np.zeros(N_NODES)
@@ -115,9 +114,10 @@ def test_sublim_moves_refreeze_of_removed_nodes_to_top_node(synthetic_column):
     column.refrozen = np.arange(1.0, N_NODES + 1.0)
     before = column.refrozen.copy()
     sublim.sublim(column, 0)
-    assert column.refrozen.sum() == pytest.approx(before.sum())
-    assert column.refrozen[0] == before[0:3].sum()
-    assert np.array_equal(column.refrozen[1:N_NODES - 3], before[3:N_NODES - 1])
+    # Two nodes go. The partly sublimated node keeps its value, and the two new nodes have none.
+    assert np.array_equal(column.refrozen[:N_NODES - 3], before[2:N_NODES - 1])
+    assert column.refrozen[N_NODES - 3] == before[-1]
+    assert np.all(column.refrozen[N_NODES - 2:] == 0.0)
 
 
 def _results(run, *names):
@@ -126,10 +126,10 @@ def _results(run, *names):
 
 
 @pytest.mark.conservation
-@pytest.mark.parametrize('liquid', ['bucket', 'darcy'])
-def test_output_sum_is_column_total_in_a_full_run(short_config, liquid):
+def test_output_sum_is_column_total_in_a_full_run(short_config):
     # A full run has dry steps, new surface nodes, and refreeze in the enthalpy solver.
-    run = short_config(years=2, start_year=1980, liquid=liquid, DFfile=MELT_FORCING, outputs=['refrozen', 'meltoutputs'],
+    # test_refrozen_output.py tests the darcy sum, which leaves out the melted nodes.
+    run = short_config(years=2, start_year=1980, liquid='bucket', DFfile=MELT_FORCING, outputs=['refrozen', 'meltoutputs'],
                        grid_outputs=False, output_bits='float64')
     run.run()
     refrozen, refreeze = _results(run, 'refrozen', 'refreeze')
@@ -173,7 +173,7 @@ def _gridded(amount, varname='refrozen', z=np.arange(0.0, 10.0, 0.5), res=0.25):
     outputs = ModelOutputs({'grid_outputs': True, 'grid_output_res': res, 'output_bits': 'float64'}, state, 1, 0.0, len(z))
     outputs.updateMO(state, 1.0, 1)
     rows = outputs.Mout_dict[varname]
-    return outputs.grid_out, rows[0, 1:], rows[1, 1:]
+    return z[0] + np.arange(rows.shape[1] - 1) * res, rows[0, 1:], rows[1, 1:]
 
 
 def _one_node(node, n_nodes=20):
@@ -191,22 +191,21 @@ def test_gridded_output_places_the_amount_in_its_node(varname, node, depths):
     grid, first_row, later_row = _gridded(_one_node(node), varname)
     assert grid[first_row > 0.0] == pytest.approx(depths)
     assert first_row[first_row > 0.0] == pytest.approx([0.15, 0.15])
-    assert np.array_equal(later_row, first_row)
+    np.testing.assert_array_equal(later_row, first_row)
 
 
 @pytest.mark.unit
 def test_gridded_output_conserves_the_amount_with_a_coarse_grid():
-    # A grid interval holds parts of several nodes.
+    # A grid interval holds parts of several nodes. The last interval holds all that is below its top.
     amount = np.arange(1.0, 21.0)
     _, row, _ = _gridded(amount, res=0.8)
     assert row[0] == pytest.approx(amount[0] + 0.6 * amount[1])
-    # The grid ends at 9.6 m. The last node starts at 9.5 m, so a fifth of it is on the grid.
-    assert row.sum() == pytest.approx(amount[:-1].sum() + 0.2 * amount[-1])
+    assert np.nansum(row) == pytest.approx(amount.sum())
 
 
 @pytest.mark.unit
-def test_gridded_output_is_zero_below_the_column():
-    # The grid is fixed at the start of the run. The column can become shorter.
+def test_gridded_output_stops_at_the_bottom_of_the_column():
+    # The grid is made again at each write, so a shorter column has NaN below its depth.
     z = np.arange(0.0, 10.0, 0.5)
     from ModelOutputs import ModelOutputs
 
@@ -216,5 +215,6 @@ def test_gridded_output_is_zero_below_the_column():
     amount = np.full(10, 0.1)
     outputs.updateMO({'z': short_z, 'refrozen': amount}, 1.0, 1)
     row = outputs.Mout_dict['refrozen'][1, 1:]
-    assert row.sum() == pytest.approx(1.0)
-    assert np.all(row[outputs.grid_out >= 5.0] == 0.0)
+    grid = np.arange(row.size) * 0.25
+    assert np.nansum(row) == pytest.approx(1.0)
+    assert np.all(np.isnan(row[grid > 4.5]))

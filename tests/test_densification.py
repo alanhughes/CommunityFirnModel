@@ -5,8 +5,8 @@ Equation tests: HLdynamic, KuipersMunneke2015 and Crocus against the equations
 of Stevens et al. (2020, Geosci. Model Dev. 13, 4355-4377) and Verjans et al.
 (2019, The Cryosphere 13, 1819-1842).
 
-Property tests: every law in physics.py against these properties, which do not
-need a reference equation:
+Property tests: each law in physics.py that a model run can use, against these
+properties, which do not need a reference equation:
 
 - The rate is not negative.
 - The rate is finite: for rho from 300 to 917 kg m-3, in a layered column, and
@@ -31,6 +31,8 @@ with literal constants. They do not use constants.py.
         Ec = 60 kJ mol-1, Eg = 42.4 kJ mol-1
     Kuipers Munneke et al. (2015), Stevens et al. Eq. 20:
         M0 = 1.042 - 0.0916 ln(b),  M1 = 1.734 - 0.2039 ln(b),  c0(KM) = M0 c0,  c1(KM) = M1 c1
+        M0 and M1 are at least 0.25 (Kuipers Munneke et al., 2015, Sect. 2.1, after
+        Ligtenberg et al., 2011). Eq. 20 does not show this limit.
     Crocus (Vionnet et al., 2012), Stevens et al. Eq. 22 and Verjans et al. Eqs. 1-3:
         drho/dt = rho sigma / eta
         eta = f1 f2 eta0 (rho / c_eta) exp(a_eta (T_melt - T) + b_eta rho)
@@ -42,7 +44,6 @@ Choices in the code that the papers do not give:
 - Zone 1 is rho < 550 kg m-3 and zone 2 is rho >= 550 kg m-3. Eqs. 6 and 18 put
   rho = 550 kg m-3 in zone 1. The rate is not continuous at 550 kg m-3.
 - g = 9.8 m s-2 and one year is 365.25 days.
-- KuipersMunneke2015 limits M0 and M1 to at least 0.25. Eq. 20 has no limit.
 - KuipersMunneke2015 uses the mean annual temperature Tm in the grain-growth
   term, after Steger et al. (2017). Kuipers Munneke et al. (2015) used T.
 - Crocus is a hybrid. Eq. 22 applies only for rho < 450 kg m-3. For
@@ -386,10 +387,12 @@ def test_Crocus_uses_kuipers_munneke_zone_2_at_450_and_above(bdot_type, T, b_ice
 LAWS_WITH_A_RATE = [
     'Arthern2010S', 'Arthern2010T', 'Barnola1991', 'Breant2017', 'Brils2022', 'Crocus',
     'GSFC2020', 'Goujon2003', 'HLSigfus', 'HLdynamic', 'Helsen2008', 'KuipersMunneke2015',
-    'Li2004', 'Li2011', 'Li2015', 'Ligtenberg2011', 'Max2018', 'Max2018b', 'MaxSP',
+    'Li2004', 'Li2011', 'Li2015', 'Ligtenberg2011', 'MaxSP',
     'Morris2014', 'Simonsen2013', 'Veldhuijsen2023', 'Yamazaki1993',
 ]
 LAWS_WITH_NO_RATE = ['Marshall1999']  # not yet written: the method returns None
+# The validator rejects these laws, and no other code calls them, so a model run cannot use them.
+LAWS_THAT_CANNOT_BE_SELECTED = ['ArthernWingham1998', 'Max2018', 'Max2018b']
 FIRNPHYSICS_METHODS_THAT_ARE_NOT_LAWS = {'__init__', 'surfacegrain', 'graincalc'}
 
 # Inputs that FirnDensityNoSpin gives only to some laws. The node spacing of the
@@ -400,7 +403,6 @@ LAW_INPUTS = {
     'Arthern2010T': {'physGrain': True},
     'Breant2017': GOUJON_INPUTS,  # FirnDensityNoSpin does not give them to this law
     'Goujon2003': GOUJON_INPUTS,
-    'MaxSP': {'MQ': 60.0},  # kJ mol-1, the default of FirnDensitySpin
 }
 MORRIS_ACTIVATION_ENERGY = 110.0e3  # J mol-1, the default of FirnDensityNoSpin
 
@@ -428,8 +430,6 @@ NEGATIVE_RATES = {
                'beta1 is negative for a warm Tm and a low accumulation rate'),
     'Li2015': (lambda T_mean, b_ice: T_mean >= 271.15 or b_ice >= 1.0,
                'beta1 is negative for Tm above 270.13 K, and beta2 at a high accumulation rate'),
-    'Max2018': (lambda T_mean, b_ice: b_ice >= 1.0,
-                'k0 is negative for an accumulation rate above 0.75 m ice eq. a-1'),
 }
 
 
@@ -467,11 +467,14 @@ def _laws_except(left_out):
 
 @pytest.mark.unit
 def test_the_law_lists_have_each_law_in_physics_py():
-    '''A new law in physics.py makes this test fail until the property tests include it.'''
+    '''
+    A new law in physics.py makes this test fail until a list includes it. A law
+    that the validator accepts must have the property tests.
+    '''
     methods = {name for name, _ in inspect.getmembers(FirnPhysics, inspect.isfunction)}
-    laws = set(LAWS_WITH_A_RATE) | set(LAWS_WITH_NO_RATE)
+    laws = set(LAWS_WITH_A_RATE) | set(LAWS_WITH_NO_RATE) | set(LAWS_THAT_CANNOT_BE_SELECTED)
     assert methods - FIRNPHYSICS_METHODS_THAT_ARE_NOT_LAWS == laws
-    assert ALLOWED_VALUES['physRho'] <= laws
+    assert ALLOWED_VALUES['physRho'] <= set(LAWS_WITH_A_RATE)
 
 
 @pytest.mark.unit
@@ -566,8 +569,7 @@ def test_rate_goes_to_zero_at_the_ice_density(law):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize('law', _laws_except(
-    {'Breant2017': 'the third term of A uses a1, not a3, and it is almost independent of T'}))
+@pytest.mark.parametrize('law', LAWS_WITH_A_RATE)
 @pytest.mark.parametrize('T', [233.15, 253.15, 263.15])
 def test_rate_increases_with_temperature(law, T):
     '''

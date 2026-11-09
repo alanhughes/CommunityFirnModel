@@ -49,8 +49,6 @@ def sublim(self,iii):
     divider         = num_boxes_sublim #VV nb of sublimated boxes, including the partially sublimated
     self.rho        = np.concatenate((self.rho[ind1:-1] , self.rho[-1]*np.ones(num_boxes_sublim))) #VV add at bottom of column as many layers as were sublimated away
     self.LWC        = np.concatenate((self.LWC[ind1:-1] , np.zeros(num_boxes_sublim))) # This is better but should be equivalent as last layer should be an ice layer -> with 0 LWC
-    if self.MELT: # refreeze of the sublimated nodes moves to the new top node, so the sum stays equal to the column total
-        self.refrozen = np.concatenate(([np.sum(self.refrozen[0:ind1+1])], self.refrozen[ind1+1:-1], [self.refrozen[-1]], np.zeros(ind1)))
     self.LWC[0]     = ps_lwc #VV LWC calculated for the partially sublimated layer
     
     self.PLWC_mem   = np.concatenate((self.PLWC_mem[ind1:-1] , np.zeros(num_boxes_sublim)))
@@ -77,6 +75,8 @@ def sublim(self,iii):
     # self.dz[0]      = ps_dz #VV dz calculated for the partially sublimated layer
     
     self.Dcon       = np.concatenate((self.Dcon[ind1:-1] , self.Dcon[-1]*np.ones(num_boxes_sublim)))
+    self.compaction = np.concatenate((self.compaction[ind1:-1], np.zeros(num_boxes_sublim)))
+    self.refrozen   = np.concatenate((self.refrozen[ind1:-1], [self.refrozen[-1]], np.zeros(num_boxes_sublim - 1))) # the bottom node stays, so it keeps its value; the new nodes have none
     self.dzn        = np.concatenate((np.zeros(num_boxes_sublim), self.dz[1:])) #this is not quite right because is assumes compaction for the pm box is zero.
     self.dzn        = self.dzn[0:self.compboxes]
     self.Tz         = np.concatenate((self.Tz[ind1:-1] , self.Tz[-1]*np.ones(num_boxes_sublim)))
