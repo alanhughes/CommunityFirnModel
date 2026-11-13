@@ -54,7 +54,8 @@ order:
    only partially melted and becomes the new surface node. The grid is then
    "refilled" at the bottom with copies of the deepest existing node,
    keeping the total node count constant (a placeholder, corrected later by
-   accumulation/densification modules elsewhere in the CFM).
+   accumulation/densification modules elsewhere in the CFM). The new nodes
+   hold no liquid water; the deepest existing node keeps its water.
 
 2. **Storage capacity calculation** -- for each node, compute:
 
@@ -342,9 +343,9 @@ Known limitations & caveats
 
 - **Regridding placeholder nodes**: new nodes appended at the bottom of the
   column during regridding are copies of the deepest existing node's
-  properties, not physically derived fresh accumulation. This is expected
-  to be corrected by other CFM modules (density/accumulation) in
-  subsequent steps, not by ``bucket()`` itself.
+  properties (except liquid water, which is zero), not physically derived
+  fresh accumulation. This is expected to be corrected by other CFM modules
+  (density/accumulation) in subsequent steps, not by ``bucket()`` itself.
 
 - **Fixed-volume assumption**: ``dz`` is never modified by refreezing
   within ``bucket()`` -- refreezing only increases density (``mass/dz``) in
