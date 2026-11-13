@@ -67,6 +67,115 @@ def test_a_node_of_low_conductivity_limits_the_exchange_through_the_step():
     assert moved[1] < 1e-2 * moved[0]     # the arithmetic mean would give about the same as the first case
 
 
+def full_column_solve(lwc, floor, saturated, interface_terms, closed):
+    '''The solve over the whole column, with no window and no reset of the tail. Returns the water after the solve.'''
+    from scipy.linalg import solve_banded
+    span = saturated - floor
+    closed = closed | (span <= 0.)
+    active = ~closed & (lwc >= floor)
+    terms = np.where(closed[:-1] | closed[1:], 0., interface_terms)
+    mobile = np.where(active, lwc - floor, 0.)
+    banded = np.zeros((3, len(lwc)))
+    banded[0, 1:] = -np.where(active[:-1], terms, 0.)
+    banded[1] = np.where(active, span + np.concatenate(([0.], terms)) + np.concatenate((terms, [0.])), 1.)
+    banded[2, :-1] = -np.where(active[1:], terms, 0.)
+    saturation = solve_banded((1, 1), banded, mobile)
+    flux = terms * (saturation[:-1] - saturation[1:])
+    new = lwc.copy()
+    new[:-1] -= flux
+    new[1:] += flux
+    return new
+
+
+@pytest.mark.unit
+def test_the_window_gives_the_result_of_the_solve_over_the_whole_column():
+    '''With sinks and closed nodes around the wet part, the window is exact. Nothing outside it changes.'''
+    rng = np.random.default_rng(11)
+    for _ in range(40):
+        n = 40
+        lwc, floor, saturated, capacity, conductivity, dz, closed = random_column(rng, n=n, closed_fraction=0.05)
+        # sinks everywhere except two groups of active nodes: the wet groups
+        lwc = floor * 0.5
+        floor = np.maximum(floor, 1e-5)
+        first, second = int(rng.integers(3, 12)), int(rng.integers(22, 34))
+        for start in (first, second):
+            lwc[start:start + 4] = floor[start:start + 4] + 0.5 * (saturated[start:start + 4] - floor[start:start + 4])
+        terms = capillary_interface_terms(conductivity, dz, 1800., 0.1)
+        windowed, excess = capillary_implicit_step(lwc, floor, saturated, 10. * saturated, terms, closed)   # no capacity pass
+        reference = full_column_solve(lwc, floor, saturated, terms, closed)
+        assert excess == 0.
+        assert np.allclose(windowed, reference, rtol=1e-12, atol=1e-18)
+        assert np.sum(windowed) == pytest.approx(lwc.sum(), rel=1e-13)
+        far = np.ones(n, dtype=bool)
+        far[max(first - 2, 0):first + 6] = False
+        far[second - 2:second + 6] = False
+        assert np.array_equal(windowed[far], lwc[far])
+
+
+@pytest.mark.unit
+def test_the_window_does_not_solve_a_column_with_a_wet_group_between_sinks():
+    '''One wet group between two sinks: only the nodes of the group and the two sinks change.'''
+    n = 12
+    floor = np.full(n, 0.0005)
+    saturated = floor + 0.004
+    lwc = np.full(n, 0.0002)                  # all sinks
+    lwc[5:7] = [0.0045, 0.003]               # one wet group of two nodes
+    terms = capillary_interface_terms(np.full(n, 1e-4), np.full(n, 0.01), 600., 0.07)
+    new, excess = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, np.zeros(n, dtype=bool))
+    assert excess == 0.
+    assert np.array_equal(new[:4], lwc[:4]) and np.array_equal(new[8:], lwc[8:])
+    assert new[4] > lwc[4] and new[7] > lwc[7]
+    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14)
+
+
+@pytest.mark.unit
+def test_the_tail_in_dry_nodes_of_floor_zero_is_set_back_and_the_budget_closes():
+    '''
+    A wet top and dry nodes of floor zero below: the backward Euler solve puts water in all of them.
+    The part below CAPILLARY_WATER_THRESHOLD is set to zero and goes to the deepest node that keeps water.
+    '''
+    from darcy_implicit import CAPILLARY_WATER_THRESHOLD
+    n = 200
+    floor = np.zeros(n)
+    saturated = np.full(n, 0.0056)
+    lwc = np.zeros(n)
+    lwc[:10] = 0.0012
+    terms = capillary_interface_terms(np.full(n, 1e-4), np.full(n, 0.01), 60., 0.0714)
+    full = full_column_solve(lwc, floor, saturated, terms, np.zeros(n, dtype=bool))
+    assert full[-1] > 0. and full[-1] < CAPILLARY_WATER_THRESHOLD   # the solve itself puts a tail down to the bottom
+    new, excess = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, np.zeros(n, dtype=bool))
+    assert excess == 0.
+    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14)
+    wet = np.flatnonzero(new > 0.)
+    assert new[wet].min() >= CAPILLARY_WATER_THRESHOLD or wet.max() < n - 1
+    assert np.count_nonzero(new) < np.count_nonzero(full)
+    assert np.all(new[wet[-1] + 1:] == 0.)
+
+
+@pytest.mark.unit
+def test_water_above_the_capacity_does_not_cross_a_closed_node_upward():
+    '''
+    Node 1 is a closed lens with no water. Node 2 is a sink with a floor near saturation, and node 3 is
+    saturated. The sink fills above its capacity. The excess goes back down in the stretch of nodes 2 and 3, and
+    does not jump the lens to node 0.
+    '''
+    dz = np.full(4, 0.01)
+    saturated = dz * 0.5
+    saturated[1] = 1e-9 * 0.01
+    floor = np.array([0., 0., 0.0045, 0.])
+    lwc = np.array([0., 0., 0.0040, 0.005])
+    capacity = saturated.copy()
+    capacity[1] = lwc[1]
+    closed = np.array([False, True, False, False])
+    terms = capillary_interface_terms(np.full(4, 1e-4), dz, 1800., 0.0714)
+    new, excess = capillary_implicit_step(lwc, floor, saturated, capacity, terms, closed)
+    assert new[0] == 0.
+    assert new[1] == 0.
+    assert excess == 0.
+    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-13)
+    assert np.all(new[2:] <= saturated[2:] + 1e-15)
+
+
 @pytest.mark.unit
 def test_step_conserves_the_water_with_the_surface_excess():
     rng = np.random.default_rng(3)
@@ -320,13 +429,16 @@ def compare_with_the_wave(dz, dtsub, **kwargs):
 #   4 mm,  60 s:  0.0015, 0.040, -7e-6, 0.0104
 #   20 mm, 60 s:  0.0040, 0.128, -2e-5, 0.0324
 #   20 mm, 600 s: 0.0097, 0.295, -1.6e-4, 0.0696
+#   20 mm, 1800 s: 0.0183, 0.626, -1.1e-3, 0.1323
 #   0.1 m, 60 s:  0.0128, 0.582, -5.6e-4, 0.1164
 # The width is wider than the wave because the gravity sweep (upwind, backward Euler) adds numerical diffusion.
-# Without the capillary step the width ratio is 0.14, so the width tolerances can see the step.
+# Without the capillary step the width ratio is 0.14 to 0.65, so the check 1 <= width ratio < 1 + tolerance sees the
+# step: every measured width with the step on is above the exact width.
 WAVE_CASES = [
     (0.004, 60., 0.003, 0.08, 1e-4, 0.015),
     (0.02, 60., 0.006, 0.17, 1e-4, 0.045),
     (0.02, 600., 0.013, 0.35, 5e-4, 0.09),
+    (0.02, 1800., 0.025, 0.75, 2e-3, 0.17),
     (0.1, 60., 0.017, 0.65, 1.5e-3, 0.15),
 ]
 
@@ -337,7 +449,7 @@ def test_front_and_width_match_the_travelling_wave(dz, dtsub, front_tolerance, w
                                                    profile_tolerance):
     front, width, plateau, profile, column = compare_with_the_wave(dz, dtsub)
     assert abs(front) < front_tolerance
-    assert abs(width - 1.) < width_tolerance
+    assert 0. <= width - 1. < width_tolerance
     assert abs(plateau) < plateau_tolerance
     assert profile < profile_tolerance
     assert column.LWC.sum() == pytest.approx(FLUX * HOURS * 3600., rel=1e-10)   # the budget closes
@@ -356,16 +468,22 @@ def test_the_width_of_the_wave_goes_with_the_capillary_pressure():
 
 
 @pytest.mark.scheme
-def test_the_wave_with_calonne_is_wider_than_with_the_power_law():
-    '''K_sat of Calonne is far above that of the power law, and the capillary flux goes with K_sat.'''
-    _, centre, power_law = run_wave(0.02, 60., hours=1., depth=1.0)
-    column = SyntheticColumn(n=50, rho_profile=DENSITY, T_profile=273.15, dz=0.02, r2=(1e-3) ** 2,
-                             rain=FLUX * 3600. / RHO_I_MGM, dt=3600., steps=1,
-                             config={**PAPER, 'Ksat_darcy': 'Calonne', **IMPLICIT, **CAPILLARY,
-                                     'dtsub_implicit_darcy': 60., 'capillary_pressure_darcy': PRESSURE})
-    melt.darcyscheme(column, 0)
-    calonne = column.LWC / column.dz / THETA_S
-    assert np.count_nonzero(calonne > 1e-6) > np.count_nonzero(power_law > 1e-6)
+def test_the_capillary_step_spreads_the_water_with_calonne():
+    '''
+    With Ksat_darcy "Calonne", K_sat is far above that of the power law, and the capillary flux goes with
+    K_sat. The comparison is with and without the capillary step: gravity alone already spreads the water.
+    '''
+    wet = {}
+    for name, extra in (('gravity', {}), ('capillary', CAPILLARY)):
+        column = SyntheticColumn(n=500, rho_profile=DENSITY, T_profile=273.15, dz=0.02, r2=(1e-3) ** 2,
+                                 rain=FLUX * 3600. / RHO_I_MGM, dt=3600., steps=1,
+                                 config={**PAPER, 'Ksat_darcy': 'Calonne', **IMPLICIT, **extra,
+                                         'dtsub_implicit_darcy': 60., 'capillary_pressure_darcy': PRESSURE})
+        melt.darcyscheme(column, 0)
+        saturation = column.LWC / column.dz / THETA_S
+        wet[name] = np.count_nonzero(saturation > 1e-3 * saturation.max())   # measured: 295 nodes with gravity, 498 with the step
+        assert column.LWC.sum() + column.melt_diagnostics['runoff'] == pytest.approx(FLUX * 3600., rel=1e-10)
+    assert wet['capillary'] > wet['gravity']
 
 
 ### The scheme: the budget and the limits ###

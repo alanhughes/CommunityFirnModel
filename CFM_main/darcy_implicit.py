@@ -197,6 +197,9 @@ def capillary_interface_terms(conductivity, thickness, dtsub, capillary_head):
     return dtsub * k_face * capillary_head / (0.5 * (dz_upper + dz_lower))
 
 
+CAPILLARY_WATER_THRESHOLD = 1e-14   # [m of water] Water that the capillary solve puts in a dry node of floor zero, below this, is a numerical tail of the diffusion (it goes down to 1e-85 m). Without the reset, every dry node of a column wakes the gravity sweep.
+
+
 def capillary_implicit_step(lwc, floor, saturated, capacity, interface_terms, closed):
     '''
     One sub-step of capillary flow, backward Euler, for the saturation of the mobile water. The
@@ -207,15 +210,33 @@ def capillary_implicit_step(lwc, floor, saturated, capacity, interface_terms, cl
     Each node is one of three kinds:
 
     - Active: the water is at or above the floor. It is an unknown of the solve.
-    - Sink: the water is below the floor. The solve holds it at S = 0. It takes the water that its
-      active neighbours give it, and that water pays its floor first. Two sinks exchange no
-      water. The wetting front moves one node in the sub-step at most for this node, so the
-      error of the rule grows with the sub-step and with thin nodes.
+    - Sink: the water is below the floor. The solve holds it at S = 0 for the whole sub-step. It
+      takes the water that its active neighbours give it, and that water pays its floor first. Two
+      sinks exchange no water. Caution for sub-steps of 1800 s or more: because a sink is held at
+      S = 0, it drains the mobile water of the wet nodes near it into itself. It can fill to
+      saturation, and the excess goes to the nodes above it. Several nodes at a wetting front can
+      end saturated while the nodes above them are near their floor. The effect grows with the
+      sub-step and with thin nodes, and it is small at a sub-step of 60 s.
     - Closed: an impermeable node, or a node with no span (a floor at or above saturation). It
       exchanges no water.
 
-    A dry node with a floor of zero is active, with S = 0. After the solve, water above the capacity
-    of a node goes to the node above it, as in implicit_gravity_sweep.
+    A dry node with a floor of zero is active, with S = 0.
+
+    The solve covers only the part of the column that can change. A sink or a closed node passes
+    no water on in the sub-step. So the solve takes each group of active nodes (between sinks and
+    closed nodes) that has mobile water, with the sinks next to it, from the first to the last of
+    these nodes. The other nodes keep their water. This is exact. A column with no mobile water
+    returns at once.
+
+    A dry node of floor zero in a group takes a tail of water from the diffusion. If a node had no
+    water and takes less than CAPILLARY_WATER_THRESHOLD, its water is set to zero and added to the
+    deepest node above it, in the same group, that keeps more than the threshold.
+
+    Water above the capacity of a node goes to the node above it, as in implicit_gravity_sweep, but
+    inside each stretch of nodes between closed nodes. Water that reaches the top node of a stretch
+    under a closed node does not pass it. It goes back down in the same stretch, into the room
+    that the nodes below gave. Only the stretch that reaches the surface gives surface excess. If
+    a stretch has no room, the rest stays in its lowest node.
 
     Parameters
     ----------
@@ -250,23 +271,69 @@ def capillary_implicit_step(lwc, floor, saturated, capacity, interface_terms, cl
     if not np.any(mobile > 0.):
         return lwc.copy(), 0.   # no water to move: S = 0 everywhere is the exact solution
 
-    ncv = len(lwc)
-    upper_terms = np.where(active[:-1], terms, 0.)    # coupling of node i to node i+1
-    lower_terms = np.where(active[1:], terms, 0.)     # coupling of node i+1 to node i
-    face_above = np.concatenate(([0.], terms))
-    face_below = np.concatenate((terms, [0.]))
-    banded = np.zeros((3, ncv))
-    banded[0, 1:] = -upper_terms
-    banded[1] = np.where(active, np.where(active, span, 1.) + face_above + face_below, 1.)
-    banded[2, :-1] = -lower_terms
-    saturation = solve_banded((1, 1), banded, mobile)   # S of each node at the end; zero for sink and closed nodes
+    ### The nodes of the solve: the groups of active nodes with mobile water, and the sinks next to them
+    group = np.cumsum(~active)                                        # the same value for the active nodes of one group
+    in_wet_group = active & np.isin(group, np.unique(group[mobile > 0.]))
+    next_to_group = ~closed & ~active & (np.concatenate(([False], in_wet_group[:-1]))
+                                         | np.concatenate((in_wet_group[1:], [False])))
+    needed = np.flatnonzero(in_wet_group | next_to_group)
+    lo, hi = needed[0], needed[-1] + 1
+    span_w, active_w, terms_w, mobile_w = span[lo:hi], active[lo:hi], terms[lo:hi - 1], mobile[lo:hi]
 
-    flux = terms * (saturation[:-1] - saturation[1:])   # water that crosses each interface downward [m]
+    nw = hi - lo
+    upper_terms = np.where(active_w[:-1], terms_w, 0.)    # coupling of node i to node i+1
+    lower_terms = np.where(active_w[1:], terms_w, 0.)     # coupling of node i+1 to node i
+    face_above = np.concatenate(([0.], terms_w))
+    face_below = np.concatenate((terms_w, [0.]))
+    banded = np.zeros((3, nw))
+    banded[0, 1:] = -upper_terms
+    banded[1] = np.where(active_w, span_w + face_above + face_below, 1.)
+    banded[2, :-1] = -lower_terms
+    saturation = solve_banded((1, 1), banded, mobile_w)   # S of each node at the end; zero for sink and closed nodes
+
+    flux = terms_w * (saturation[:-1] - saturation[1:])   # water that crosses each interface downward [m]
     lwc_new = lwc.copy()
-    lwc_new[:-1] -= flux
-    lwc_new[1:] += flux
+    window = lwc_new[lo:hi]                                # a view: changes here change lwc_new
+    window[:-1] -= flux
+    window[1:] += flux
+
+    ### Tail of the diffusion in dry nodes of floor zero: set it back to zero in the node above
+    dry = (lwc[lo:hi] <= 0.) & (floor[lo:hi] <= 0.) & ~closed[lo:hi]
+    tail = np.flatnonzero(dry & (window < CAPILLARY_WATER_THRESHOLD))
+    if len(tail) > 0:
+        keeps = np.flatnonzero(~dry | (window >= CAPILLARY_WATER_THRESHOLD))
+        host = np.searchsorted(keeps, tail) - 1                 # the deepest node above that keeps its water
+        closed_count = np.cumsum(closed[lo:hi])
+        has_host = host >= 0
+        host[~has_host] = 0
+        movable = has_host & (closed_count[keeps[host]] == closed_count[tail])   # no closed node between
+        tail, host = tail[movable], keeps[host[movable]]
+        np.add.at(window, host, window[tail])
+        window[tail] = 0.
+
+    ### Water above the capacity of a node: up inside each stretch between closed nodes
     limit = np.maximum(capacity, lwc)
-    surface_excess = move_water_above_capacity_up(lwc_new, limit)
+    surface_excess = 0.
+    if np.any(lwc_new > limit):
+        edges = np.flatnonzero(closed)
+        starts = np.concatenate(([0], edges + 1))
+        stops = np.concatenate((edges, [len(lwc)]))
+        for first, stop in zip(starts, stops):
+            if stop <= first or not np.any(lwc_new[first:stop] > limit[first:stop]):
+                continue
+            stretch = lwc_new[first:stop]   # a view
+            excess = move_water_above_capacity_up(stretch, limit[first:stop])
+            if first == 0:
+                surface_excess = excess
+                continue
+            for j in range(stop - first):   # back down into the room of this stretch
+                put = min(excess, max(0., limit[first + j] - stretch[j]))
+                stretch[j] += put
+                excess -= put
+                if excess <= 0.:
+                    break
+            if excess > 0.:
+                stretch[-1] += excess   # no room left: the lowest node of the stretch keeps it
     return lwc_new, surface_excess
 
 

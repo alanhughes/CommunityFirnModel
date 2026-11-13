@@ -1265,18 +1265,26 @@ def darcyscheme(self,iii):
           column have no capillary flow.
         - Sink rule: a node with water below its floor is held at S = 0 in the solve. It
           takes the water that its neighbours give it, and that water pays its floor first.
-          At a wetting front, such a node can take more than its deficit in one sub-step.
-          The error of this rule grows with the sub-step and with thin nodes.
+          Caution for sub-steps of 1800 s or more: the sink is held at S = 0 for the whole
+          solve, so it drains the mobile water of the wet nodes near it into itself. It can
+          fill to saturation, and the excess goes to the nodes above it. Several nodes at the
+          wetting front can end saturated while the nodes above them are near their floor.
+          The effect grows with the sub-step and with thin nodes, and it is small at 60 s.
         - Water above the capacity of a node goes to the node above it, and the water that
-          the top node cannot take is surface runoff, as in the gravity sweep.
+          the top node cannot take is surface runoff, as in the gravity sweep. Water does
+          not cross an impermeable node: it goes back down in its own stretch of nodes.
+        - The solve covers only the groups of nodes that have mobile water, with the sinks
+          next to them. In dry firn with a floor of zero, a water content of less than 1e-14 m
+          that the solve puts in a node that had none is set back to zero.
         - With flow_step_darcy "explicit", the key has no effect. A message is printed once
           in each run. The explicit step always has its own van Genuchten capillary flow.
         - The step uses k_r = S^2. If krel_darcy is not "power_law" with krel_exponent_darcy 2,
           the gravity flow and the capillary flow use different k_r. A message is printed
           once in each run, and the run continues.
-        - Caution: K_sat is that of the run. With Ksat_darcy "Calonne" it is about 1000 times
-          that of "power_law" (about 0.09 against 5.5e-5 m s-1 at 400 kg m-3), so the
-          capillary flow is about 1000 times larger.
+        - Caution: K_sat is that of the run. With Ksat_darcy "Calonne" it is about 1700 times
+          that of "power_law" at a grain radius of 1 mm (about 0.09 against 5.5e-5 m s-1 at
+          400 kg m-3), so the capillary flow is about 1700 times larger. The ratio goes with
+          the square of the grain radius.
 
     capillary_pressure_darcy : float [Pa]
         The coefficient c of p_c = c / S. Default 700 (gamma / d_p of Meyer and Hewitt, 2017).
