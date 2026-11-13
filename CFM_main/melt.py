@@ -20,6 +20,7 @@ from darcy_funcs import runoffZuoOerlemans
 from darcy_funcs import runoffDarcy
 from darcy_funcs import flux_bisection
 from darcy_funcs import flux_newtonraphson
+from darcy_implicit import implicit_gravity_sweep, implicit_lateral_runoff, nodes_with_lateral_runoff
 
 '''
 Functions to handle meltwater percolation through the firn column.
@@ -983,10 +984,11 @@ _DARCY_DEFAULTS = {
     'runoff_method_darcy': 'Darcy', 'ColeouLesaffre': True, 'IrrVal': 0.02, 'theta_s_factor_darcy': RHO_I_MGM,
     'Ksat_darcy': 'Calonne', 'Ksat_k0_darcy': 5.56e-11, 'viscosity_darcy': 0.001792,
     'krel_darcy': 'vanGenuchten', 'krel_exponent_darcy': 2.,
-    'snapshot_fraction_darcy': 0.5,
-}  # the values the scheme used before these options were configurable (snapshot_fraction_darcy is new)
+    'snapshot_fraction_darcy': 0.5, 'flow_step_darcy': 'explicit', 'dtsub_implicit_darcy': 1800.,
+}  # the values the scheme used before these options were configurable (snapshot_fraction_darcy, flow_step_darcy and dtsub_implicit_darcy are new)
 _KSAT_LAWS_DARCY = ('Calonne', 'power_law')        # values of Ksat_darcy
 _KREL_LAWS_DARCY = ('vanGenuchten', 'power_law')   # values of krel_darcy
+_FLOW_STEPS_DARCY = ('explicit', 'implicit_gravity')   # values of flow_step_darcy
 _darcy_missing_reported = set()
 
 def _darcy_option(config, key):
@@ -1002,6 +1004,83 @@ def _darcy_option(config, key):
     return _DARCY_DEFAULTS[key]
 ### end _darcy_option ###
 #########################
+
+def _implicit_flow_step(self, liq_input, imptop, imp, ncv, rg, rhodcy, phi, phidcy, theta_s, LWC_i, cp_i, dtsub,
+                        Ksat_law, Ksat_k0, viscosity, krel_law, krel_exponent, lat_runoff, slope_proxy,
+                        runoff_method):
+    '''
+    One sub-step of the implicit gravity flow of darcyscheme (flow_step_darcy "implicit_gravity").
+    It changes self.LWC. The arguments are the quantities of the sub-step in darcyscheme. cp_i is
+    the specific heat of ice that the refreezing block of that sub-step uses [J kg-1 K-1].
+
+    Returns
+    -------
+    runoff0 : float
+        Water that leaves at the surface or at the bottom of the column [m we]: the input above a
+        lens at the surface, and the water that the column cannot take.
+    runoff1 : float
+        Lateral runoff of the sub-step [m we].
+    solves : int
+        Number of root solves of the sweep.
+    '''
+    if imptop[0] == 0:
+        runoff0       = 1 * liq_input   # impermeable lens at the surface: all input runs off
+        surface_input = 0.
+    else:
+        runoff0       = 0.
+        surface_input = liq_input
+
+    avG, nvG, mvG = vG_Yama_params(rg, rhodcy)   # van Genuchten shape parameters (alpha, n, m)
+    if Ksat_law == 'Calonne':
+        bigk_s = hydrconducsat_Calonne(rg, rhodcy, viscosity)         # hydraulic conductivity at saturation [m s-1]
+    else:
+        bigk_s = hydrconducsat_power_law(phidcy, Ksat_k0, viscosity)  # hydraulic conductivity at saturation [m s-1]
+    krel_parameter = mvG if krel_law == 'vanGenuchten' else krel_exponent
+
+    lwc_saturated = self.dz * theta_s                  # water in each node at saturation [m we]
+    lwc_capacity  = np.copy(lwc_saturated)             # largest water content of each node [m we]
+    lwc_capacity[imp] = self.LWC[imp]                  # no water storage in impermeable ice lenses
+
+    blocked = np.zeros(ncv, dtype=bool)                # nodes with no outflow
+    blocked[imp] = True
+    blocked[imp[imp > 0] - 1] = True                   # the node above each impermeable node
+    blocked[-1] = True                                 # bottom node
+
+    # Water that the refreezing block below will freeze in each node: it does not flow on.
+    cold_content = cp_i * self.mass * (T_MELT - self.Tz)                    # cold content of nodes [J]
+    refr_pot     = np.minimum(cold_content / LF_I,
+                              RHO_I_MGM * phi * self.dz * RHO_W_KGM - 1e-6) # same potential as the refreezing block [kg]
+    lwc_held     = np.maximum(0., refr_pot) / RHO_W_KGM                     # [m we]
+
+    self.LWC, surface_excess, solves = implicit_gravity_sweep(
+        self.LWC, lwc_capacity, LWC_i, lwc_saturated, dtsub * bigk_s, krel_law, krel_parameter,
+        surface_input, blocked, lwc_held)
+    runoff0 = runoff0 + surface_excess   # water that the column cannot take
+
+    runoff1 = 0.
+    if lat_runoff:
+        ### Lateral runoff on the state after the sweep. Water that the refreezing freezes, and the
+        ### irreducible water, stay in the node.
+        lwc_floor     = np.minimum(self.LWC, LWC_i + lwc_held)
+        theta_e_after = (self.LWC - LWC_i) / (lwc_saturated - LWC_i)    # effective saturation after the sweep
+        runoff_nodes  = nodes_with_lateral_runoff(imptop, theta_e_after, ncv)
+        runoff_nodes  = runoff_nodes[self.LWC[runoff_nodes] > lwc_floor[runoff_nodes]]
+        if runoff_method == 'ZuoOerlemans':
+            rfout = runoffZuoOerlemans(dtsub, slope_proxy, np.maximum(0, self.LWC - LWC_i), runoff_nodes)
+        elif runoff_method == 'Darcy':
+            rfout = implicit_lateral_runoff(self.LWC, LWC_i, lwc_saturated, dtsub * slope_proxy * bigk_s,
+                                            krel_law, krel_parameter, runoff_nodes)
+        else:
+            print(f"Unrecognized runoff_method_darcy: '{runoff_method}'. "
+                  "Must be 'ZuoOerlemans' or 'Darcy'. Exiting.")
+            sys.exit()
+        rfout = np.minimum(rfout, self.LWC - lwc_floor)   # runoff cannot take a node below its floor
+        self.LWC = self.LWC - rfout
+        runoff1 = np.sum(rfout)
+
+    return runoff0, runoff1, solves
+### end _implicit_flow_step ###
+######################
 
 def clear_darcy_snapshot(self):
     '''
@@ -1078,7 +1157,7 @@ def darcyscheme(self,iii):
     Configuration options (read from `self.c`; defaults used with a warning
     if missing -- see USER CHOICES block below):
 
-    dtmin_darcy, dtmax_darcy, dtsub_darcy : float [s]
+    dtmin_darcy, dtmax_darcy, dtsub_darcy : float [s]  (explicit flow step only)
         Minimum, maximum, and initial internal sub-step size.
     RhoImp_darcy : float [kg m-3]
         Density threshold above which a node is considered part of an
@@ -1132,6 +1211,31 @@ def darcyscheme(self,iii):
         Read only if `self.darcy_snapshot` is True (the output 'darcy_snapshot').
         The fraction of the step, from 0 to 1, at which the snapshot is taken.
         Default 0.5, the middle of the step.
+
+    flow_step_darcy : str
+        "explicit" (default): the limiting-flux scheme described above.
+        "implicit_gravity": backward Euler gravity-only flow, swept from the top
+        node down (see darcy_implicit.py). It has no capillary flow. The input enters the
+        top node of the sweep, the limiting flux is not solved, and the water that the
+        refreezing will freeze stays in its node. Lateral runoff is applied after the sweep.
+        The sub-step is fixed at dtsub_implicit_darcy (dtsub_darcy, dtmin_darcy and
+        dtmax_darcy do not apply), but not beyond the model step.
+        Differences from the explicit step in the lateral runoff:
+        it applies to the node above each lens, to a saturated stack above it, and to the node
+        above the stack, but not to the nodes inside a lens; it does not take a node below its
+        irreducible water plus the water that its cold content freezes; and the end-of-step rule
+        for capped nodes acts before the refreezing, so held water in a capped node runs off.
+        Caution: use a dtsub_implicit_darcy of 3600 s or less. Each sub-step removes its
+        melt from the surface first, and then moves its water through the column that is
+        left. With a long sub-step (for example one for each model step of a day), melt
+        that reaches an ice lens can remove or thin the lens before the water of that
+        sub-step moves, and the runoff and the refreezing are then wrong. A message is
+        printed once in each run if the sub-step in effect is above 3600 s. In test
+        columns the results at 3600 s were within 4 % of those at 60 s.
+
+    dtsub_implicit_darcy : float [s]
+        Sub-step of the implicit gravity flow. Default 1800. It is used only with
+        flow_step_darcy "implicit_gravity".
 
     With Ksat_darcy and krel_darcy at "power_law", the flux law is that of
     Meyer and Hewitt (2017) only if theta_e is their saturation phi_w/phi.
@@ -1217,11 +1321,27 @@ def darcyscheme(self,iii):
     viscosity       = _darcy_option(self.c, 'viscosity_darcy')      # [Pa s] dynamic viscosity of water
     krel_law        = _darcy_option(self.c, 'krel_darcy')           # law for the relative hydraulic conductivity
     krel_exponent   = _darcy_option(self.c, 'krel_exponent_darcy')  # exponent of theta_e, power_law only
+    flow_step       = _darcy_option(self.c, 'flow_step_darcy')      # 'explicit' (limiting flux) or 'implicit_gravity'
     ### END USER CHOICES ###
     if Ksat_law not in _KSAT_LAWS_DARCY:
         raise ValueError(f'Ksat_darcy is "{Ksat_law}". It must be one of {_KSAT_LAWS_DARCY}.')
     if krel_law not in _KREL_LAWS_DARCY:
         raise ValueError(f'krel_darcy is "{krel_law}". It must be one of {_KREL_LAWS_DARCY}.')
+    if flow_step not in _FLOW_STEPS_DARCY:
+        raise ValueError(f'flow_step_darcy is "{flow_step}". It must be one of {_FLOW_STEPS_DARCY}.')
+    implicit_flow = (flow_step == 'implicit_gravity')   # fixed sub-step, implicit gravity flow, no limiting flux
+    dtsub_fixed = dtsub               # sub-step of the implicit flow step [s]
+    if implicit_flow:
+        dtsub_fixed = _darcy_option(self.c, 'dtsub_implicit_darcy')   # [s] fixed sub-step of the implicit flow step
+        if not dtsub_fixed > 0:
+            raise ValueError(f'dtsub_implicit_darcy is {dtsub_fixed}. It must be above 0 s.')
+        dtsub = min(dtsub_fixed, timetot)   # the sub-step is fixed, but not beyond the end of the step
+        if dtsub > 3600. and not getattr(self, 'implicit_long_substep_reported', False):
+            self.implicit_long_substep_reported = True   # the message is printed once in each run
+            print(f'dtsub_implicit_darcy is {dtsub:g} s. With a sub-step above 3600 s, the runoff and the '
+                  'refreezing can be wrong on days when melt reaches an ice lens. See the docstring of darcyscheme.')
+    n_substeps  = 0   # number of sub-steps in this call
+    root_solves = 0   # number of root solves of the implicit flow step
     snapshot_at = None   # time in the step at which the snapshot outputs are taken [s]; None: no snapshot
     if getattr(self, 'darcy_snapshot', False):
         snapshot_fraction = _darcy_option(self.c, 'snapshot_fraction_darcy')
@@ -1265,6 +1385,7 @@ def darcyscheme(self,iii):
         sys.exit()
 
     while timer < timetot:  
+        n_substeps += 1
         ### Melt upper nodes ###
         if meltflux_mass > 0:
             meltstep_mass = meltflux_mass * dtsub             # melt mass over dtsub time interval [kg]
@@ -1348,211 +1469,219 @@ def darcyscheme(self,iii):
         LWCacm = self.dz * theta_s - self.LWC        # extra LWC that can be accommodated in each layer
         LWCacm[imp] = 0.                             # no water storage in impermeable ice lenses
 
-        ### Distribute liquid water input at the surface into available accommodation space ###
-        nodes_with_capacity = np.where(np.cumsum(LWCacm) >= liq_input)[0]   # nodes down to which the column can hold all the input
-        i_input_bottom = nodes_with_capacity[0] if nodes_with_capacity.size > 0 else ncv - 1   # deepest node receiving liquid input; if the column cannot hold the input, the excess runs off below
+        if not implicit_flow:
+            ### Distribute liquid water input at the surface into available accommodation space ###
+            nodes_with_capacity = np.where(np.cumsum(LWCacm) >= liq_input)[0]   # nodes down to which the column can hold all the input
+            i_input_bottom = nodes_with_capacity[0] if nodes_with_capacity.size > 0 else ncv - 1   # deepest node receiving liquid input; if the column cannot hold the input, the excess runs off below
 
-        if i_input_bottom >= imptop[0]:
-            # Input would reach an impermeable lens: cap distribution to the node just above it
-            i_input_bottom = imptop[0] - 1
+            if i_input_bottom >= imptop[0]:
+                # Input would reach an impermeable lens: cap distribution to the node just above it
+                i_input_bottom = imptop[0] - 1
 
-        if i_input_bottom == -1:
-            # Impermeable lens sits right at the surface: all input runs off immediately
-            runoff0 = 1 * liq_input
-        elif i_input_bottom == 0:
-            # Only the surface node receives input, limited by its accommodation space
-            self.LWC[0] = self.LWC[0] + min(liq_input, LWCacm[0])
-            runoff0 = liq_input - min(liq_input, LWCacm[0])   # input not accommodated by the surface node runs off
-        elif i_input_bottom > 0:
-            # Nodes [0:i_input_bottom] are filled completely; node i_input_bottom takes the remainder
-            liq_input_remaining = liq_input - np.cumsum(LWCacm)[i_input_bottom - 1]
-            self.LWC[0:i_input_bottom] = self.LWC[0:i_input_bottom] + LWCacm[0:i_input_bottom]
-            self.LWC[i_input_bottom] = self.LWC[i_input_bottom] + min(liq_input_remaining, LWCacm[i_input_bottom])
-            runoff0 = liq_input_remaining - min(liq_input_remaining, LWCacm[i_input_bottom])
+            if i_input_bottom == -1:
+                # Impermeable lens sits right at the surface: all input runs off immediately
+                runoff0 = 1 * liq_input
+            elif i_input_bottom == 0:
+                # Only the surface node receives input, limited by its accommodation space
+                self.LWC[0] = self.LWC[0] + min(liq_input, LWCacm[0])
+                runoff0 = liq_input - min(liq_input, LWCacm[0])   # input not accommodated by the surface node runs off
+            elif i_input_bottom > 0:
+                # Nodes [0:i_input_bottom] are filled completely; node i_input_bottom takes the remainder
+                liq_input_remaining = liq_input - np.cumsum(LWCacm)[i_input_bottom - 1]
+                self.LWC[0:i_input_bottom] = self.LWC[0:i_input_bottom] + LWCacm[0:i_input_bottom]
+                self.LWC[i_input_bottom] = self.LWC[i_input_bottom] + min(liq_input_remaining, LWCacm[i_input_bottom])
+                runoff0 = liq_input_remaining - min(liq_input_remaining, LWCacm[i_input_bottom])
 
-        ### Recompute volumetric water content and accommodation space to reflect the updated LWC
-        theta_w = self.LWC / self.dz
-        LWCav = np.maximum(0, self.LWC - LWC_i)      # LWC available for water flow
-        LWCacm = self.dz * theta_s - self.LWC        # remaining accommodation space per node
-        LWCacm[imp] = 0.                              # no water storage in impermeable ice lenses
+            ### Recompute volumetric water content and accommodation space to reflect the updated LWC
+            theta_w = self.LWC / self.dz
+            LWCav = np.maximum(0, self.LWC - LWC_i)      # LWC available for water flow
+            LWCacm = self.dz * theta_s - self.LWC        # remaining accommodation space per node
+            LWCacm[imp] = 0.                              # no water storage in impermeable ice lenses
         
-        ### Effective water saturation, Hirashima (2010) Eq. (5) -- rescales
-        ### volumetric water content onto a 0-1 scale between the irreducible
-        ### content (theta_i, "0") and saturated content (theta_s, "1").
-        theta_e = (theta_w - theta_i) / (theta_s - theta_i)
-        stab_e  = 1e-9                                  # stabilization bound for theta_e
-        theta_e = np.maximum(stab_e, theta_e)            # avoid non-positive effective saturation
-        theta_e = np.minimum(1 - stab_e, theta_e)        # avoid effective saturation equal to 1
+            ### Effective water saturation, Hirashima (2010) Eq. (5) -- rescales
+            ### volumetric water content onto a 0-1 scale between the irreducible
+            ### content (theta_i, "0") and saturated content (theta_s, "1").
+            theta_e = (theta_w - theta_i) / (theta_s - theta_i)
+            stab_e  = 1e-9                                  # stabilization bound for theta_e
+            theta_e = np.maximum(stab_e, theta_e)            # avoid non-positive effective saturation
+            theta_e = np.minimum(1 - stab_e, theta_e)        # avoid effective saturation equal to 1
 
-        avG, nvG, mvG = vG_Yama_params(rg, rhodcy)       # van Genuchten shape parameters (alpha, n, m)
-        if Ksat_law == 'Calonne':
-            bigk_s = hydrconducsat_Calonne(rg, rhodcy, viscosity)            # hydraulic conductivity at saturation [m s-1]
-        else:
-            bigk_s = hydrconducsat_power_law(phidcy, Ksat_k0, viscosity)     # hydraulic conductivity at saturation [m s-1]
-        if krel_law == 'vanGenuchten':
-            bigk_r = krel_vG(mvG, theta_e)                   # relative hydraulic conductivity
-        else:
-            bigk_r = krel_power_law(theta_e, krel_exponent)  # relative hydraulic conductivity
-        bigk   = bigk_r * bigk_s                          # hydraulic conductivity, Hirashima (2010) Eq. (11) [m s-1]
-        bigk_d = np.append(bigk[1:], 0)                  # hydraulic conductivity staggered down (next node's value)
-
-        hd    = phead_vG(avG, nvG, mvG, theta_e)          # pressure head [m]
-        dlthd = np.append(np.diff(hd), 0)                 # head difference between node and underlying node
-        dhdz  = dlthd / dltz                              # d(head)/d(z); positive => absolute head increases downward
-
-        ### Upwind/downwind conductivity selection at each interface, following
-        ### Szymkiewicz (2009) Eq. (3c): the sign of the *total* head gradient
-        ### (pressure head gradient + gravity, i.e. dhdz+1) determines whether
-        ### flow is driven downward (use the upper node's conductivity, bigk)
-        ### or upward against gravity (use the lower node's conductivity, bigk_d).
-        ### This avoids the numerical instability of a naive central-conductivity
-        ### scheme. Note: Szymkiewicz (2009) defines potential head as negative;
-        ### what matters here is only the sign of q in their Eq. (1).
-        bigkedg = np.zeros(ncv)
-        bigkedg[dhdz + 1 >= 0] = bigk[dhdz + 1 >= 0]      # downward total-head gradient
-        bigkedg[dhdz + 1 < 0]  = bigk_d[dhdz + 1 < 0]     # upward total-head gradient
-
-        ### Determine flow at interfaces of volumes, following Hirashima et al. (2010) ###
-        ## Detect all nodes that cannot have outflow ##
-        indsdry = np.where(theta_e <= 1e-3)[0]   # essentially dry nodes: no mobile water, no outflow possible
-
-        if np.any(theta_e > 1e-3):
-            i0dry = np.where(theta_e > 1e-3)[0][-1] + 1   # depth below which all nodes are dry
-        else:
-            i0dry = 1   # only surface influx in the surface node
-
-        imp_d = imp - 1   # nodes with an impermeable volume directly below them (also blocked from outflow)
-
-        ## Find continuous saturated stacks directly above an impermeable boundary ##
-        # A node sitting in a fully-saturated (theta_e >= 0.95) column immediately
-        # above an ice lens has no available pore space to push water further into
-        # via Darcy flux -- physically, this is a perched water table that has
-        # already filled up to that point. Any additional water reaching these
-        # nodes must be handled via ponding/lateral runoff elsewhere, not through
-        # the normal flux solver below.
-        satnofl = []   # indices of nodes in a saturated, no-outflow stack above a lens
-
-        for lens_top_idx in imptop:                 # check above each impermeable lens
-            if lens_top_idx <= i0dry:                # only relevant where water is percolating
-                i_scan_up = lens_top_idx - 1         # start just above the lens
-                reached_surface = (i_scan_up < 0)    # already at the surface?
-
-                # Walk upward while each node remains fully saturated
-                while (not reached_surface) and theta_e[i_scan_up] >= 0.95:
-                    satnofl.append(i_scan_up)
-                    i_scan_up -= 1
-                    if i_scan_up < 0:
-                        reached_surface = True   # surface reached; terminate the scan
-
-        satnofl = np.array(satnofl)     # convert to array
-        satnofl_d = satnofl - 1         # nodes directly above a saturated-no-outflow node (also blocked)
-
-        # i00: all node indices that must have zero outflow --
-        # dry nodes, impermeable nodes, nodes just above an impermeable barrier,
-        # nodes just above a saturated-no-outflow stack, and the domain's bottom boundary.
-        i00 = np.unique(np.concatenate((indsdry, imp, imp_d, satnofl_d, [ncv - 1]))).astype(int)
-
-        # i11: candidate nodes (within the wet region, 0 to i0dry) that CAN have
-        # outflow > 0 -- everything not excluded by i00. These are passed to the
-        # iterative flux solver below.
-        i11 = [ii for ii in range(i0dry) if ii not in i00]
-
-        ### Iterative guesses to determine qlim of Hirashima et al. (2010) ###
-        glw      = np.zeros(ncv - 1)      # guess of downward-transported LWC at each interface (qlim in Hirashima 2010)
-        glwc     = np.copy(self.LWC)      # working LWC profile, updated as glw is resolved interface-by-interface
-        glwcacm  = np.copy(LWCacm)        # working accommodation space, updated alongside glwc
-        gtheta_e = np.copy(theta_e)       # working effective saturation, updated alongside glwc
-        ghd      = np.zeros(ncv - 1)      # working pressure head, updated alongside glwc
-
-        # Resolve interfaces bottom-up: solving the deepest interface first, then
-        # updating glwc/glwcacm, ensures each shallower interface's calculation
-        # already reflects the flux decisions made below it.
-        for j1 in np.flip(i11):
-            # qlim must equalize hd[j1] and hd[j1+1], assuming inflow from j1-1 has not yet occurred
-            inds11 = np.array([j1, j1 + 1])   # indices on each side of the interface of interest
-
-            # --- Initial guess for glw[j1] ---
-            # Defensive abs() on the right-hand side guards against a slightly
-            # negative flux arising from numerical round-off (e.g. glwcacm
-            # marginally negative); fluxes are otherwise non-negative by design.
-            if timer == 0 or abs(glwflux_d1[j1] - glwflux_d2[j1]) > 0.1 * abs(glwflux_d1[j1]):
-                # Flux has changed significantly since the last sub-step (not in
-                # steady state): guess via the analytic saturation-equalizer.
-                glw[j1] = thetaeff_equaliser(theta_i[inds11], theta_s[inds11], glwc[inds11], self.dz[inds11])
-                glw[j1] = max(glw[j1], 0)                                    # avoid negative guess values
-                glw[j1] = min(glw[j1], min(LWCav[j1], glwcacm[j1 + 1]))      # cannot exceed available/accommodatable LWC
+            avG, nvG, mvG = vG_Yama_params(rg, rhodcy)       # van Genuchten shape parameters (alpha, n, m)
+            if Ksat_law == 'Calonne':
+                bigk_s = hydrconducsat_Calonne(rg, rhodcy, viscosity)            # hydraulic conductivity at saturation [m s-1]
             else:
-                # Flux is stable: warm-start from the previous sub-step's flux rate
-                glw[j1] = dtsub * glwflux_d1[j1]
-                glw[j1] = min(glw[j1], min(LWCav[j1], glwcacm[j1 + 1]))
-
-            # --- Refine the guess and evaluate the equilibrium residual ---
-            gtheta_e[inds11] = thetae_update(glw[j1], theta_i[inds11], theta_s[inds11], glwc[inds11], self.dz[inds11])
-            ghd[inds11] = phead_vG(avG[inds11], nvG[inds11], mvG[inds11], gtheta_e[inds11])   # pressure head [m]
-            f_eq = ghd[j1] - ghd[j1 + 1] - dltz[j1]   # Hirashima (2010) Eq. (20), evaluated at this interface
-
-            if abs(f_eq) > 1.:
-                # Guess is far from equilibrium: use the more robust bisection method
-                glw[j1] = flux_bisection(glw[j1], LWCav[inds11], glwcacm[inds11], theta_i[inds11], theta_s[inds11],
-                                          glwc[inds11], self.dz[inds11], avG[inds11], nvG[inds11],
-                                          mvG[inds11], eps_cvg)
+                bigk_s = hydrconducsat_power_law(phidcy, Ksat_k0, viscosity)     # hydraulic conductivity at saturation [m s-1]
+            if krel_law == 'vanGenuchten':
+                bigk_r = krel_vG(mvG, theta_e)                   # relative hydraulic conductivity
             else:
-                # Guess is close to equilibrium: use the faster-converging Newton-Raphson method
-                glw[j1] = flux_newtonraphson(glw[j1], LWCav[inds11], glwcacm[inds11], theta_i[inds11], theta_s[inds11],
+                bigk_r = krel_power_law(theta_e, krel_exponent)  # relative hydraulic conductivity
+            bigk   = bigk_r * bigk_s                          # hydraulic conductivity, Hirashima (2010) Eq. (11) [m s-1]
+            bigk_d = np.append(bigk[1:], 0)                  # hydraulic conductivity staggered down (next node's value)
+
+            hd    = phead_vG(avG, nvG, mvG, theta_e)          # pressure head [m]
+            dlthd = np.append(np.diff(hd), 0)                 # head difference between node and underlying node
+            dhdz  = dlthd / dltz                              # d(head)/d(z); positive => absolute head increases downward
+
+            ### Upwind/downwind conductivity selection at each interface, following
+            ### Szymkiewicz (2009) Eq. (3c): the sign of the *total* head gradient
+            ### (pressure head gradient + gravity, i.e. dhdz+1) determines whether
+            ### flow is driven downward (use the upper node's conductivity, bigk)
+            ### or upward against gravity (use the lower node's conductivity, bigk_d).
+            ### This avoids the numerical instability of a naive central-conductivity
+            ### scheme. Note: Szymkiewicz (2009) defines potential head as negative;
+            ### what matters here is only the sign of q in their Eq. (1).
+            bigkedg = np.zeros(ncv)
+            bigkedg[dhdz + 1 >= 0] = bigk[dhdz + 1 >= 0]      # downward total-head gradient
+            bigkedg[dhdz + 1 < 0]  = bigk_d[dhdz + 1 < 0]     # upward total-head gradient
+
+            ### Determine flow at interfaces of volumes, following Hirashima et al. (2010) ###
+            ## Detect all nodes that cannot have outflow ##
+            indsdry = np.where(theta_e <= 1e-3)[0]   # essentially dry nodes: no mobile water, no outflow possible
+
+            if np.any(theta_e > 1e-3):
+                i0dry = np.where(theta_e > 1e-3)[0][-1] + 1   # depth below which all nodes are dry
+            else:
+                i0dry = 1   # only surface influx in the surface node
+
+            imp_d = imp - 1   # nodes with an impermeable volume directly below them (also blocked from outflow)
+
+            ## Find continuous saturated stacks directly above an impermeable boundary ##
+            # A node sitting in a fully-saturated (theta_e >= 0.95) column immediately
+            # above an ice lens has no available pore space to push water further into
+            # via Darcy flux -- physically, this is a perched water table that has
+            # already filled up to that point. Any additional water reaching these
+            # nodes must be handled via ponding/lateral runoff elsewhere, not through
+            # the normal flux solver below.
+            satnofl = []   # indices of nodes in a saturated, no-outflow stack above a lens
+
+            for lens_top_idx in imptop:                 # check above each impermeable lens
+                if lens_top_idx <= i0dry:                # only relevant where water is percolating
+                    i_scan_up = lens_top_idx - 1         # start just above the lens
+                    reached_surface = (i_scan_up < 0)    # already at the surface?
+
+                    # Walk upward while each node remains fully saturated
+                    while (not reached_surface) and theta_e[i_scan_up] >= 0.95:
+                        satnofl.append(i_scan_up)
+                        i_scan_up -= 1
+                        if i_scan_up < 0:
+                            reached_surface = True   # surface reached; terminate the scan
+
+            satnofl = np.array(satnofl)     # convert to array
+            satnofl_d = satnofl - 1         # nodes directly above a saturated-no-outflow node (also blocked)
+
+            # i00: all node indices that must have zero outflow --
+            # dry nodes, impermeable nodes, nodes just above an impermeable barrier,
+            # nodes just above a saturated-no-outflow stack, and the domain's bottom boundary.
+            i00 = np.unique(np.concatenate((indsdry, imp, imp_d, satnofl_d, [ncv - 1]))).astype(int)
+
+            # i11: candidate nodes (within the wet region, 0 to i0dry) that CAN have
+            # outflow > 0 -- everything not excluded by i00. These are passed to the
+            # iterative flux solver below.
+            i11 = [ii for ii in range(i0dry) if ii not in i00]
+
+            ### Iterative guesses to determine qlim of Hirashima et al. (2010) ###
+            glw      = np.zeros(ncv - 1)      # guess of downward-transported LWC at each interface (qlim in Hirashima 2010)
+            glwc     = np.copy(self.LWC)      # working LWC profile, updated as glw is resolved interface-by-interface
+            glwcacm  = np.copy(LWCacm)        # working accommodation space, updated alongside glwc
+            gtheta_e = np.copy(theta_e)       # working effective saturation, updated alongside glwc
+            ghd      = np.zeros(ncv - 1)      # working pressure head, updated alongside glwc
+
+            # Resolve interfaces bottom-up: solving the deepest interface first, then
+            # updating glwc/glwcacm, ensures each shallower interface's calculation
+            # already reflects the flux decisions made below it.
+            for j1 in np.flip(i11):
+                # qlim must equalize hd[j1] and hd[j1+1], assuming inflow from j1-1 has not yet occurred
+                inds11 = np.array([j1, j1 + 1])   # indices on each side of the interface of interest
+
+                # --- Initial guess for glw[j1] ---
+                # Defensive abs() on the right-hand side guards against a slightly
+                # negative flux arising from numerical round-off (e.g. glwcacm
+                # marginally negative); fluxes are otherwise non-negative by design.
+                if timer == 0 or abs(glwflux_d1[j1] - glwflux_d2[j1]) > 0.1 * abs(glwflux_d1[j1]):
+                    # Flux has changed significantly since the last sub-step (not in
+                    # steady state): guess via the analytic saturation-equalizer.
+                    glw[j1] = thetaeff_equaliser(theta_i[inds11], theta_s[inds11], glwc[inds11], self.dz[inds11])
+                    glw[j1] = max(glw[j1], 0)                                    # avoid negative guess values
+                    glw[j1] = min(glw[j1], min(LWCav[j1], glwcacm[j1 + 1]))      # cannot exceed available/accommodatable LWC
+                else:
+                    # Flux is stable: warm-start from the previous sub-step's flux rate
+                    glw[j1] = dtsub * glwflux_d1[j1]
+                    glw[j1] = min(glw[j1], min(LWCav[j1], glwcacm[j1 + 1]))
+
+                # --- Refine the guess and evaluate the equilibrium residual ---
+                gtheta_e[inds11] = thetae_update(glw[j1], theta_i[inds11], theta_s[inds11], glwc[inds11], self.dz[inds11])
+                ghd[inds11] = phead_vG(avG[inds11], nvG[inds11], mvG[inds11], gtheta_e[inds11])   # pressure head [m]
+                f_eq = ghd[j1] - ghd[j1 + 1] - dltz[j1]   # Hirashima (2010) Eq. (20), evaluated at this interface
+
+                if abs(f_eq) > 1.:
+                    # Guess is far from equilibrium: use the more robust bisection method
+                    glw[j1] = flux_bisection(glw[j1], LWCav[inds11], glwcacm[inds11], theta_i[inds11], theta_s[inds11],
                                               glwc[inds11], self.dz[inds11], avG[inds11], nvG[inds11],
                                               mvG[inds11], eps_cvg)
+                else:
+                    # Guess is close to equilibrium: use the faster-converging Newton-Raphson method
+                    glw[j1] = flux_newtonraphson(glw[j1], LWCav[inds11], glwcacm[inds11], theta_i[inds11], theta_s[inds11],
+                                                  glwc[inds11], self.dz[inds11], avG[inds11], nvG[inds11],
+                                                  mvG[inds11], eps_cvg)
 
-            # Update the working LWC profile and accommodation space to reflect
-            # this interface's resolved flux, before moving to the interface above.
-            glwc = self.LWC + np.append(0, glw) - np.append(glw, 0)
-            glwcacm = self.dz * theta_s - glwc
-            glwcacm[imp] = 0.   # no water storage in impermeable ice lenses
+                # Update the working LWC profile and accommodation space to reflect
+                # this interface's resolved flux, before moving to the interface above.
+                glwc = self.LWC + np.append(0, glw) - np.append(glw, 0)
+                glwcacm = self.dz * theta_s - glwc
+                glwcacm[imp] = 0.   # no water storage in impermeable ice lenses
 
-        glwflux_d2 = np.copy(glwflux_d1)   # shift: previous "last step" flux becomes "two steps ago"
-        glwflux_d1 = glw / dtsub           # save this sub-step's resolved flux, for use as next step's warm-start
+            glwflux_d2 = np.copy(glwflux_d1)   # shift: previous "last step" flux becomes "two steps ago"
+            glwflux_d1 = glw / dtsub           # save this sub-step's resolved flux, for use as next step's warm-start
         
-        ### Compute the water fluxes ###
-        qlim = np.append(glw, 0)          # limiting flux at each interface, Hirashima (2010) Eq. (20) [m] (0 outflow from last node)
-        q0   = bigkedg * (dhdz + 1)       # instantaneous Darcy flux under current conditions, Hirashima (2010) Eq. (1) [m s-1]
-        ifl  = np.logical_and(qlim > 1e-20, q0 > 1e-20)   # interfaces with meaningful (non-zero) flow
+            ### Compute the water fluxes ###
+            qlim = np.append(glw, 0)          # limiting flux at each interface, Hirashima (2010) Eq. (20) [m] (0 outflow from last node)
+            q0   = bigkedg * (dhdz + 1)       # instantaneous Darcy flux under current conditions, Hirashima (2010) Eq. (1) [m s-1]
+            ifl  = np.logical_and(qlim > 1e-20, q0 > 1e-20)   # interfaces with meaningful (non-zero) flow
 
-        qstep = np.zeros(ncv)             # total flux transferred over this sub-step, per interface
-        # Exponential relaxation toward the equilibrium-limiting flux qlim, following
-        # Hirashima (2010) Eq. (23). This avoids overshooting equilibrium that a naive
-        # q0*dtsub estimate could produce, without requiring an infinitesimally small
-        # sub-step.
-        qstep[ifl] = qlim[ifl] * (1 - np.exp(-dtsub * q0[ifl] / qlim[ifl]))   # [m we]
-        qstep[-1] = 0                      # lower boundary condition: no outflow from the last node
-        qstep = np.minimum(qstep, LWCav)   # safety clamp: flow cannot exceed available water
+            qstep = np.zeros(ncv)             # total flux transferred over this sub-step, per interface
+            # Exponential relaxation toward the equilibrium-limiting flux qlim, following
+            # Hirashima (2010) Eq. (23). This avoids overshooting equilibrium that a naive
+            # q0*dtsub estimate could produce, without requiring an infinitesimally small
+            # sub-step.
+            qstep[ifl] = qlim[ifl] * (1 - np.exp(-dtsub * q0[ifl] / qlim[ifl]))   # [m we]
+            qstep[-1] = 0                      # lower boundary condition: no outflow from the last node
+            qstep = np.minimum(qstep, LWCav)   # safety clamp: flow cannot exceed available water
 
-        lwcin  = np.append(0., qstep[0:-1])   # inflow to each node (no upper boundary flux into the surface node)
-        lwcout = np.copy(qstep)               # outflow from each node [m we]
+            lwcin  = np.append(0., qstep[0:-1])   # inflow to each node (no upper boundary flux into the surface node)
+            lwcout = np.copy(qstep)               # outflow from each node [m we]
 
-        if lat_runoff:
-            ### Lateral runoff for water that is available but has no downward outflow
-            ### path (sitting directly above an impermeable barrier or a saturated,
-            ### no-outflow stack).
-            ii_rf = np.concatenate((imp_d, satnofl_d)).astype(int)
-            ii_rf = np.intersect1d(ii_rf, np.where(LWCav > 0)[0])
+            if lat_runoff:
+                ### Lateral runoff for water that is available but has no downward outflow
+                ### path (sitting directly above an impermeable barrier or a saturated,
+                ### no-outflow stack).
+                ii_rf = np.concatenate((imp_d, satnofl_d)).astype(int)
+                ii_rf = np.intersect1d(ii_rf, np.where(LWCav > 0)[0])
 
-            if runoff_method == 'ZuoOerlemans':
-                rfout = runoffZuoOerlemans(dtsub, slope_proxy, LWCav, ii_rf)
-            elif runoff_method == 'Darcy':
-                rfout = runoffDarcy(dtsub, slope_proxy, bigk, ii_rf)
+                if runoff_method == 'ZuoOerlemans':
+                    rfout = runoffZuoOerlemans(dtsub, slope_proxy, LWCav, ii_rf)
+                elif runoff_method == 'Darcy':
+                    rfout = runoffDarcy(dtsub, slope_proxy, bigk, ii_rf)
+                else:
+                    print(f"Unrecognized runoff_method_darcy: '{runoff_method}'. "
+                          "Must be 'ZuoOerlemans' or 'Darcy'. Exiting.")
+                    sys.exit()
+
+                rfout = np.minimum(rfout, LWCav - lwcout) # runoff cannot push total outflow beyond LWCav
+                lwcout += rfout
+                runoff1 = np.sum(rfout) # total lateral (non-surface) runoff this sub-step [m we]
             else:
-                print(f"Unrecognized runoff_method_darcy: '{runoff_method}'. "
-                      "Must be 'ZuoOerlemans' or 'Darcy'. Exiting.")
-                sys.exit()
+                runoff1 = 0.        
 
-            rfout = np.minimum(rfout, LWCav - lwcout) # runoff cannot push total outflow beyond LWCav
-            lwcout += rfout
-            runoff1 = np.sum(rfout) # total lateral (non-surface) runoff this sub-step [m we]
+            self.LWC = self.LWC + lwcin - lwcout
         else:
-            runoff1 = 0.        
+            runoff0, runoff1, solves = _implicit_flow_step(
+                self, liq_input, imptop, imp, ncv, rg, rhodcy, phi, phidcy, theta_s, LWC_i, cp_i, dtsub,
+                Ksat_law, Ksat_k0, viscosity, krel_law, krel_exponent, lat_runoff, slope_proxy, runoff_method)
+            root_solves += solves
 
-        self.LWC = self.LWC + lwcin - lwcout
+            ifl = np.zeros(ncv, dtype=bool)   # no limiting flux: the sub-step adaptation below does not apply
 
-        if timer + dtsub == timetot:
+        if timer + dtsub == timetot or (implicit_flow and timer + dtsub >= timetot - 1e-6):
             # At the very end of the Darcy routine: any LWC remaining in nodes whose
             # density was artificially capped (rhomod, Section 4) must run off, since
             # their true density does not actually support holding that water -- the
@@ -1610,6 +1739,8 @@ def darcyscheme(self,iii):
         dtsub = max(dtsub, dtmin)             # keep sub-step within configured bounds
         dtsub = min(dtsub, dtmax)
         dtsub = min(dtsub, timetot - timer)   # ensure the final sub-step lands exactly on timetot
+        if implicit_flow:
+            dtsub = min(dtsub_fixed, timetot - timer)   # fixed sub-step
         
     ### Sanity checks ###
     ### Water balance check: total liquid remaining + total refrozen + total
@@ -1624,6 +1755,9 @@ def darcyscheme(self,iii):
     self.melt_diagnostics['lwc_end']  = np.sum(self.LWC)  # [m we]
     self.melt_diagnostics['refrozen'] = refr_tot          # [m we]
     self.melt_diagnostics['runoff']   = runofftot         # [m we]
+    self.melt_diagnostics['substeps'] = n_substeps
+    if implicit_flow:
+        self.melt_diagnostics['root_solves'] = root_solves
     _record_check(self, 'budget', abs(water_balance_residual) <= 1e-12, residual=water_balance_residual, threshold=1e-12)
 
     if np.any(self.Tz > T_MELT):

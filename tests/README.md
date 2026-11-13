@@ -46,6 +46,14 @@ Both front functions take the cold degrees of the firn ahead of the front. They 
 - Two tests multiply K_sat by 10 in the scheme. At resolved nodes the plateau follows the law. At thin nodes it does not change, because the limiter caps the flux.
 - The last tests set `Ksat_darcy` and `krel_darcy`, at 20 mm nodes. With both laws at `power_law` (n = 2), `viscosity_darcy` 1e-3 and the paper settings (`ColeouLesaffre` false, `IrrVal` 0, `theta_s_factor_darcy` 1), the oracle is `power_law_front`. With short fixed sub-steps the tolerance is 0.5 %. At the default sub-steps the plateau is 6.7 % high, because with k_r = S² the plateau goes as the square root of the flux. One mixed case, the power law for K_sat with the van Genuchten k_r, uses `solve_front`.
 
+`test_darcy_implicit.py` checks the implicit gravity flow step of `darcyscheme` (`flow_step_darcy` "implicit_gravity", `darcy_implicit.py`).
+
+- The unit tests check the root solve (`water_after_outflow`) against its equation, for van Genuchten and for the power law with exponents 2 (closed form) and 3 (`brentq`). They also check the limits and the sweep: mass, capacity, blocked nodes, the back-up of water, and the hold of cold nodes.
+- The front tests run the cases that are strict `xfail` for the explicit step in `test_darcy_front_speed.py`, at a sub-step of 1800 s, with the same 4 % tolerance. They also run a column with nodes of 4 mm over nodes of 20 mm. They import the oracle functions from that file.
+- The sub-step test compares 60 s, 1800 s and 3600 s on one column. The cold firn test compares the front with the kinematic wave with refreezing, at 1800 s and at one sub-step for each day. The second case sees the hold of cold nodes.
+- The edge cases (lens at the surface, lens at node 1, no input, `ZuoOerlemans`, both `krel_darcy` laws, no lateral runoff) run with `melt_strict` on. The lens tests check an impermeable lens, and that a lens of one node and of five nodes pass the same water.
+- The key tests check that the explicit step is the default (bit for bit), that a wrong `flow_step_darcy` or a `dtsub_implicit_darcy` of 0 s or below stops the run, that the implicit step uses `dtsub_implicit_darcy` only, the counters `substeps` and `root_solves`, and the message for a sub-step above 3600 s. The message is printed once in each run (a flag on the model instance).
+
 `test_darcy_permeability_laws.py` checks the K_sat and k_r laws against values calculated by hand. Its scheme tests show that each of `Ksat_darcy`, `Ksat_k0_darcy`, `viscosity_darcy`, `krel_darcy` and `krel_exponent_darcy` changes the water profile after one call of `darcyscheme`. For all of them except `krel_darcy`, the test also checks the direction: a smaller conductivity keeps the water higher.
 
 `test_darcy_snapshot.py` checks the output `darcy_snapshot`, the state of `darcyscheme` partway through a step (`snapshot_fraction_darcy`).
