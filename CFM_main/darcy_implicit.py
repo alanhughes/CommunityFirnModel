@@ -3,6 +3,10 @@
 Experiment: an implicit gravity step for the Darcy scheme (option "implicit_gravity" of the
 config key flow_step_darcy). It replaces the limiting-flux loop of darcyscheme in melt.py.
 It has no capillary flow.
+
+Caution: the step is stable at any sub-step, but darcyscheme removes the melt of a sub-step
+before the flow of that sub-step. Use a dtsub_darcy of 3600 s or less. A sub-step of a day can
+give wrong runoff and refreezing when melt reaches an ice lens (see the docstring of darcyscheme).
 '''
 
 import math

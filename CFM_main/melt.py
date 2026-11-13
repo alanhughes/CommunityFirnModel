@@ -1142,6 +1142,12 @@ def darcyscheme(self,iii):
         dtsub_darcy (dtmin_darcy and dtmax_darcy do not apply). The input enters the
         top node of the sweep, the limiting flux is not solved, and the water that the
         refreezing will freeze stays in its node. Lateral runoff is applied after the sweep.
+        Caution: use a dtsub_darcy of 3600 s or less. Each sub-step removes its melt
+        from the surface first, and then moves its water through the column that is
+        left. With a long sub-step (for example one for each model step of a day), melt
+        that reaches an ice lens can remove or thin the lens before the water of that
+        sub-step moves, and the runoff and the refreezing are then wrong. In test
+        columns the results at 3600 s were within 4 % of those at 60 s.
 
     With Ksat_darcy and krel_darcy at "power_law", the flux law is that of
     Meyer and Hewitt (2017) only if theta_e is their saturation phi_w/phi.
