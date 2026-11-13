@@ -82,7 +82,7 @@ In ``test_hl_analytic.py``, ``test_liquid_water.py`` and ``test_densification.py
 Scheme tests (``scheme``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A scheme test calls one meltwater scheme once, on a synthetic column (see `Fixtures for new tests`_). It does not run the model.
+A scheme test calls one meltwater scheme, or the sublimation step, once, on a synthetic column (see `Fixtures for new tests`_). It does not run the model.
 
 .. list-table::
    :header-rows: 1
@@ -94,6 +94,8 @@ A scheme test calls one meltwater scheme once, on a synthetic column (see `Fixtu
      - ``bucket`` and ``darcyscheme``: the melted thickness ``dh_melt`` agrees with the melt mass divided by the density. ``darcyscheme`` gives the two interface nodes to the flux solvers, keeps each flux within the available water and pore space, and uses bisection when the first guess is far from equilibrium.
    * - ``test_fixtures.py``
      - ``bucket`` closes its water budget on a synthetic column and passes all its checks in strict mode. ``darcyscheme`` runs on a synthetic column and passes its checks.
+   * - ``test_sublim_scheme.py``
+     - ``sublim``: the liquid water of the bottom node stays in that node, the nodes added at the bottom hold no liquid water, and the sublimated water is the water of the sublimated nodes.
 
 Conservation tests (``conservation``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
