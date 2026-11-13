@@ -2,7 +2,8 @@
 '''
 An implicit gravity step for the Darcy scheme (option "implicit_gravity" of the
 config key flow_step_darcy). It replaces the limiting-flux loop of darcyscheme in melt.py.
-It has no capillary flow.
+The gravity sweep has no capillary flow. The config key capillary_implicit_darcy adds the capillary
+flow of Meyer and Hewitt (2017), as one linear step after the sweep (capillary_implicit_step).
 
 Caution: the step is stable at any sub-step, but darcyscheme removes the melt of a sub-step
 before the flow of that sub-step. Use a dtsub_implicit_darcy of 3600 s or less. A sub-step of a day can
@@ -11,6 +12,7 @@ give wrong runoff and refreezing when melt reaches an ice lens (see the docstrin
 
 import math
 import numpy as np
+from scipy.linalg import solve_banded
 from scipy.optimize import brentq
 
 
@@ -137,6 +139,16 @@ def implicit_gravity_sweep(lwc, capacity, irreducible, saturated, rate, krel_law
 
     # water above the capacity of a node goes back to the node above it
     limit = np.maximum(capacity, lwc)
+    excess = move_water_above_capacity_up(lwc_new, limit)
+    return lwc_new, excess, solves
+
+
+def move_water_above_capacity_up(lwc_new, limit):
+    '''
+    Move the water above the limit of a node to the node above it, from the bottom up. It changes
+    `lwc_new` in place and returns the water that leaves the top node [m]. `limit` is the largest
+    water content of each node [m].
+    '''
     too_full = np.flatnonzero(lwc_new > limit)
     excess = 0.
     if len(too_full) > 0:
@@ -146,7 +158,116 @@ def implicit_gravity_sweep(lwc, capacity, irreducible, saturated, rate, krel_law
             lwc_new[j] -= excess
             if excess == 0. and j <= too_full[0]:
                 break
-    return lwc_new, excess, solves
+    return excess
+
+
+def capillary_interface_terms(conductivity, thickness, dtsub, capillary_head):
+    '''
+    Water that passes each interface in one sub-step for a unit difference of saturation [m]:
+
+        G = dtsub * K_face * h_c / dz_face
+
+    K_face is the harmonic mean of the saturated conductivity of the two nodes, weighted by their
+    thickness. It is zero if one conductivity is zero. dz_face is the distance between the node
+    centres. The capillary pressure is p_c = c / S, so the capillary flux is -K_sat h_c dS/dz,
+    with h_c = c / (rho_w g) (Meyer and Hewitt, 2017).
+
+    Parameters
+    ----------
+    conductivity : ndarray
+        Saturated hydraulic conductivity of each node [m s-1].
+    thickness : ndarray
+        Node thickness [m].
+    dtsub : float
+        Sub-step [s].
+    capillary_head : float
+        h_c [m].
+
+    Returns
+    -------
+    terms : ndarray
+        One value for each interface (length n - 1) [m].
+    '''
+    k_upper, k_lower = conductivity[:-1], conductivity[1:]
+    dz_upper, dz_lower = thickness[:-1], thickness[1:]
+    both_open = (k_upper > 0.) & (k_lower > 0.)
+    resistance = np.divide(dz_upper, k_upper, out=np.zeros(len(k_upper)), where=both_open) \
+        + np.divide(dz_lower, k_lower, out=np.zeros(len(k_lower)), where=both_open)
+    k_face = np.divide(dz_upper + dz_lower, resistance, out=np.zeros(len(k_upper)), where=both_open)
+    return dtsub * k_face * capillary_head / (0.5 * (dz_upper + dz_lower))
+
+
+def capillary_implicit_step(lwc, floor, saturated, capacity, interface_terms, closed):
+    '''
+    One sub-step of capillary flow, backward Euler, for the saturation of the mobile water. The
+    saturation is S = (water - floor) / (saturated - floor). Water crosses an interface from the
+    wetter node to the drier node, G (S_upper - S_lower). The step is one linear tridiagonal
+    solve, with no iteration.
+
+    Each node is one of three kinds:
+
+    - Active: the water is at or above the floor. It is an unknown of the solve.
+    - Sink: the water is below the floor. The solve holds it at S = 0. It takes the water that its
+      active neighbours give it, and that water pays its floor first. Two sinks exchange no
+      water. The wetting front moves one node in the sub-step at most for this node, so the
+      error of the rule grows with the sub-step and with thin nodes.
+    - Closed: an impermeable node, or a node with no span (a floor at or above saturation). It
+      exchanges no water.
+
+    A dry node with a floor of zero is active, with S = 0. After the solve, water above the capacity
+    of a node goes to the node above it, as in implicit_gravity_sweep.
+
+    Parameters
+    ----------
+    lwc : ndarray
+        Water in each node at the start of the step [m].
+    floor : ndarray
+        Water that does not flow: the irreducible water plus the water that the cold content
+        freezes [m].
+    saturated : ndarray
+        Water in each node at saturation [m].
+    capacity : ndarray
+        Largest water content of each node [m].
+    interface_terms : ndarray
+        G of each interface, from capillary_interface_terms (length n - 1) [m]. A later term for
+        the grain size of each node can change these values or add to the matrix here.
+    closed : ndarray of bool
+        True for a node that exchanges no water (the impermeable nodes).
+
+    Returns
+    -------
+    lwc_new : ndarray
+        Water in each node at the end of the step [m].
+    surface_excess : float
+        Water that the top node cannot take [m].
+    '''
+    span = saturated - floor
+    closed = closed | (span <= 0.)
+    active = ~closed & (lwc >= floor)
+    terms = np.where(closed[:-1] | closed[1:], 0., interface_terms)
+
+    mobile = np.where(active, lwc - floor, 0.)   # span times S at the start [m]
+    if not np.any(mobile > 0.):
+        return lwc.copy(), 0.   # no water to move: S = 0 everywhere is the exact solution
+
+    ncv = len(lwc)
+    upper_terms = np.where(active[:-1], terms, 0.)    # coupling of node i to node i+1
+    lower_terms = np.where(active[1:], terms, 0.)     # coupling of node i+1 to node i
+    face_above = np.concatenate(([0.], terms))
+    face_below = np.concatenate((terms, [0.]))
+    banded = np.zeros((3, ncv))
+    banded[0, 1:] = -upper_terms
+    banded[1] = np.where(active, np.where(active, span, 1.) + face_above + face_below, 1.)
+    banded[2, :-1] = -lower_terms
+    saturation = solve_banded((1, 1), banded, mobile)   # S of each node at the end; zero for sink and closed nodes
+
+    flux = terms * (saturation[:-1] - saturation[1:])   # water that crosses each interface downward [m]
+    lwc_new = lwc.copy()
+    lwc_new[:-1] -= flux
+    lwc_new[1:] += flux
+    limit = np.maximum(capacity, lwc)
+    surface_excess = move_water_above_capacity_up(lwc_new, limit)
+    return lwc_new, surface_excess
 
 
 def implicit_lateral_runoff(lwc, irreducible, saturated, rate, krel_law, krel_parameter, nodes):

@@ -96,6 +96,7 @@ ALLOWED_VALUES = {
     'Ksat_darcy': {'Calonne', 'power_law'},
     'krel_darcy': {'vanGenuchten', 'power_law'},
     'flow_step_darcy': {'explicit', 'implicit_gravity'},
+    'capillary_implicit_darcy': {'none', 'power_law'},
 }
 
 # Keys that hold lists whose elements are validated against ALLOWED_VALUES.
@@ -171,6 +172,7 @@ KNOWN_KEYS = {
     'runoff_method_darcy', 'theta_s_factor_darcy',
     'Ksat_darcy', 'Ksat_k0_darcy', 'viscosity_darcy', 'krel_darcy', 'krel_exponent_darcy',
     'snapshot_fraction_darcy', 'flow_step_darcy', 'dtsub_implicit_darcy',
+    'capillary_implicit_darcy', 'capillary_pressure_darcy',
     # SEB
     'SEB', 'SEB_TL_thick', 'albedo_factor',
     'SEB_turb_method', 'SEB_roughness_mode', 'SEB_z0m', 'SEB_z0h', 'SEB_z0q',
