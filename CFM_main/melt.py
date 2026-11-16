@@ -1261,8 +1261,9 @@ def darcyscheme(self,iii):
         with h_c = c / (rho_w g), where K_sat is the saturated conductivity of the run
         (Ksat_darcy). The conductivity at an interface is the harmonic mean of the two nodes,
         weighted by thickness. A value other than "none" or "power_law" stops the run.
-        - An impermeable node exchanges no capillary flow. The surface and the bottom of the
-          column have no capillary flow.
+        - An impermeable node exchanges no capillary flow, and nor does a node with no span
+          (a floor at or above saturation, for example a very cold node). The surface and the
+          bottom of the column have no capillary flow.
         - Sink rule: a node with water below its floor is held at S = 0 in the solve. It
           takes the water that its neighbours give it, and that water pays its floor first.
           Caution for sub-steps of 1800 s or more: the sink is held at S = 0 for the whole
@@ -1272,7 +1273,8 @@ def darcyscheme(self,iii):
           The effect grows with the sub-step and with thin nodes, and it is small at 60 s.
         - Water above the capacity of a node goes to the node above it, and the water that
           the top node cannot take is surface runoff, as in the gravity sweep. Water does
-          not cross an impermeable node: it goes back down in its own stretch of nodes.
+          not cross an impermeable node or a node with no span: it goes back down in its own
+          stretch of nodes.
         - The solve covers only the groups of nodes that have mobile water, with the sinks
           next to them. In dry firn with a floor of zero, a water content of less than 1e-14 m
           that the solve puts in a node that had none is set back to zero.

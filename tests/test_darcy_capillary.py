@@ -105,7 +105,7 @@ def test_the_window_gives_the_result_of_the_solve_over_the_whole_column():
         reference = full_column_solve(lwc, floor, saturated, terms, closed)
         assert excess == 0.
         assert np.allclose(windowed, reference, rtol=1e-12, atol=1e-18)
-        assert np.sum(windowed) == pytest.approx(lwc.sum(), rel=1e-13)
+        assert np.sum(windowed) == pytest.approx(lwc.sum(), rel=1e-13, abs=0)
         far = np.ones(n, dtype=bool)
         far[max(first - 2, 0):first + 6] = False
         far[second - 2:second + 6] = False
@@ -125,7 +125,7 @@ def test_the_window_does_not_solve_a_column_with_a_wet_group_between_sinks():
     assert excess == 0.
     assert np.array_equal(new[:4], lwc[:4]) and np.array_equal(new[8:], lwc[8:])
     assert new[4] > lwc[4] and new[7] > lwc[7]
-    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14)
+    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14, abs=0)
 
 
 @pytest.mark.unit
@@ -145,11 +145,37 @@ def test_the_tail_in_dry_nodes_of_floor_zero_is_set_back_and_the_budget_closes()
     assert full[-1] > 0. and full[-1] < CAPILLARY_WATER_THRESHOLD   # the solve itself puts a tail down to the bottom
     new, excess = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, np.zeros(n, dtype=bool))
     assert excess == 0.
-    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14)
+    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14, abs=0)
     wet = np.flatnonzero(new > 0.)
     assert new[wet].min() >= CAPILLARY_WATER_THRESHOLD or wet.max() < n - 1
     assert np.count_nonzero(new) < np.count_nonzero(full)
     assert np.all(new[wet[-1] + 1:] == 0.)
+
+
+@pytest.mark.unit
+def test_the_tail_does_not_move_into_a_closed_node():
+    '''
+    Wet firn above a lens (node 3), dry nodes of floor zero below it, and wetter firn at the bottom. The
+    capillary rise from the bottom puts a tail just below the lens. That tail has no node above it in its
+    stretch that keeps water, so it stays: the lens takes no water, and each stretch keeps its own water.
+    '''
+    n = 50
+    dz = np.full(n, 0.01)
+    floor = np.zeros(n)
+    saturated = np.full(n, 0.004)
+    lwc = np.zeros(n)
+    lwc[:3] = 0.002
+    lwc[45:] = 0.003
+    closed = np.zeros(n, dtype=bool)
+    closed[3] = True
+    capacity = saturated.copy()
+    capacity[3] = 0.
+    terms = capillary_interface_terms(np.full(n, 1e-6), dz, 60., 0.0714)
+    new, excess = capillary_implicit_step(lwc, floor, saturated, capacity, terms, closed)
+    assert new[3] == 0.
+    assert excess == 0.
+    assert new[:3].sum() == pytest.approx(lwc[:3].sum(), rel=1e-14, abs=0)
+    assert new[4:].sum() == pytest.approx(lwc[4:].sum(), rel=1e-14, abs=0)
 
 
 @pytest.mark.unit
@@ -172,7 +198,7 @@ def test_water_above_the_capacity_does_not_cross_a_closed_node_upward():
     assert new[0] == 0.
     assert new[1] == 0.
     assert excess == 0.
-    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-13)
+    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-13, abs=0)
     assert np.all(new[2:] <= saturated[2:] + 1e-15)
 
 
@@ -183,7 +209,7 @@ def test_step_conserves_the_water_with_the_surface_excess():
         column = random_column(rng, closed_fraction=0.1, sink_fraction=0.2)
         lwc, floor, saturated, capacity, conductivity, dz, closed = column
         new, excess = step(column, dtsub=3600., head=0.3)
-        assert new.sum() + excess == pytest.approx(lwc.sum(), rel=1e-12)
+        assert new.sum() + excess == pytest.approx(lwc.sum(), rel=1e-12, abs=0)
         assert excess >= 0.
         assert np.all(new <= np.maximum(capacity, lwc) + 1e-15)
         assert np.all(new >= -1e-15)
@@ -202,7 +228,7 @@ def test_water_above_the_capacity_of_a_sink_goes_up_to_the_surface_excess():
     new, excess = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, np.zeros(2, dtype=bool))
     assert new[0] == pytest.approx(0.004)
     assert excess > 0.
-    assert new.sum() + excess == pytest.approx(lwc.sum(), rel=1e-14)
+    assert new.sum() + excess == pytest.approx(lwc.sum(), rel=1e-14, abs=0)
 
 
 @pytest.mark.unit
@@ -216,8 +242,8 @@ def test_no_water_passes_a_closed_node():
         closed[j] = True
         new, excess = step(column, dtsub=3600., head=0.3)
         assert new[j] == lwc[j]
-        assert new[:j].sum() + excess == pytest.approx(lwc[:j].sum(), rel=1e-12)
-        assert new[j + 1:].sum() == pytest.approx(lwc[j + 1:].sum(), rel=1e-12)
+        assert new[:j].sum() + excess == pytest.approx(lwc[:j].sum(), rel=1e-12, abs=0)
+        assert new[j + 1:].sum() == pytest.approx(lwc[j + 1:].sum(), rel=1e-12, abs=0)
         upper = tuple(a[:j] for a in column[:6]) + (closed[:j],)
         lower = tuple(a[j + 1:] for a in column[:6]) + (closed[j + 1:],)
         assert np.allclose(new[:j], step(upper, dtsub=3600., head=0.3)[0], rtol=1e-12, atol=1e-18)
@@ -230,8 +256,8 @@ def test_a_zero_conductivity_closes_the_interface_like_a_closed_node():
     lwc, floor, saturated, capacity, conductivity, dz, closed = random_column(rng, n=12)
     conductivity[6] = 0.
     new, _ = step((lwc, floor, saturated, capacity, conductivity, dz, closed))
-    assert new[:6].sum() == pytest.approx(lwc[:6].sum(), rel=1e-12)   # the node 6 and the node 5 exchange nothing
-    assert new[6:].sum() == pytest.approx(lwc[6:].sum(), rel=1e-12)
+    assert new[:6].sum() == pytest.approx(lwc[:6].sum(), rel=1e-12, abs=0)   # the node 6 and the node 5 exchange nothing
+    assert new[6:].sum() == pytest.approx(lwc[6:].sum(), rel=1e-12, abs=0)
 
 
 @pytest.mark.unit
@@ -326,7 +352,7 @@ def test_a_sink_node_pays_its_floor_first():
     assert new[1] == pytest.approx(0.0015 + terms[0] * saturation_0, rel=1e-12)
     assert new[2] == 0.0005
     assert new[1] < floor[1]   # the water of this step did not take the node above its floor
-    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14)
+    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14, abs=0)
 
 
 @pytest.mark.unit
@@ -452,7 +478,7 @@ def test_front_and_width_match_the_travelling_wave(dz, dtsub, front_tolerance, w
     assert 0. <= width - 1. < width_tolerance
     assert abs(plateau) < plateau_tolerance
     assert profile < profile_tolerance
-    assert column.LWC.sum() == pytest.approx(FLUX * HOURS * 3600., rel=1e-10)   # the budget closes
+    assert column.LWC.sum() == pytest.approx(FLUX * HOURS * 3600., rel=1e-10, abs=0)   # the budget closes
     assert column.melt_diagnostics['runoff'] < 1e-12   # roundoff of the sweep, 5e-14 at most
 
 
@@ -482,7 +508,7 @@ def test_the_capillary_step_spreads_the_water_with_calonne():
         melt.darcyscheme(column, 0)
         saturation = column.LWC / column.dz / THETA_S
         wet[name] = np.count_nonzero(saturation > 1e-3 * saturation.max())   # measured: 295 nodes with gravity, 498 with the step
-        assert column.LWC.sum() + column.melt_diagnostics['runoff'] == pytest.approx(FLUX * 3600., rel=1e-10)
+        assert column.LWC.sum() + column.melt_diagnostics['runoff'] == pytest.approx(FLUX * 3600., rel=1e-10, abs=0)
     assert wet['capillary'] > wet['gravity']
 
 

@@ -230,13 +230,16 @@ def capillary_implicit_step(lwc, floor, saturated, capacity, interface_terms, cl
 
     A dry node of floor zero in a group takes a tail of water from the diffusion. If a node had no
     water and takes less than CAPILLARY_WATER_THRESHOLD, its water is set to zero and added to the
-    deepest node above it, in the same group, that keeps more than the threshold.
+    deepest node above it that keeps its water, with no closed node between them. A closed node is
+    never that node. If there is no such node (for example, the tail rises to the top of the
+    solve, under a closed node or at the surface), the tail keeps its water.
 
     Water above the capacity of a node goes to the node above it, as in implicit_gravity_sweep, but
     inside each stretch of nodes between closed nodes. Water that reaches the top node of a stretch
     under a closed node does not pass it. It goes back down in the same stretch, into the room
     that the nodes below gave. Only the stretch that reaches the surface gives surface excess. If
-    a stretch has no room, the rest stays in its lowest node.
+    a stretch has no room, the rest stays in its lowest node. This occurs only by round-off,
+    because the solve keeps the water of each stretch.
 
     Parameters
     ----------
@@ -253,7 +256,8 @@ def capillary_implicit_step(lwc, floor, saturated, capacity, interface_terms, cl
         G of each interface, from capillary_interface_terms (length n - 1) [m]. A later term for
         the grain size of each node can change these values or add to the matrix here.
     closed : ndarray of bool
-        True for a node that exchanges no water (the impermeable nodes).
+        True for a node that exchanges no water (the impermeable nodes). A node with no span is
+        also closed.
 
     Returns
     -------
@@ -301,7 +305,7 @@ def capillary_implicit_step(lwc, floor, saturated, capacity, interface_terms, cl
     dry = (lwc[lo:hi] <= 0.) & (floor[lo:hi] <= 0.) & ~closed[lo:hi]
     tail = np.flatnonzero(dry & (window < CAPILLARY_WATER_THRESHOLD))
     if len(tail) > 0:
-        keeps = np.flatnonzero(~dry | (window >= CAPILLARY_WATER_THRESHOLD))
+        keeps = np.flatnonzero(~closed[lo:hi] & (~dry | (window >= CAPILLARY_WATER_THRESHOLD)))   # a closed node is never a host
         host = np.searchsorted(keeps, tail) - 1                 # the deepest node above that keeps its water
         closed_count = np.cumsum(closed[lo:hi])
         has_host = host >= 0
