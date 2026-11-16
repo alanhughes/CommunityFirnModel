@@ -15,7 +15,7 @@ import melt
 from cfm_testing import SyntheticColumn
 from constants import GRAVITY, RHO_I, RHO_I_MGM, RHO_W_KGM
 from darcy_funcs import hydrconducsat_power_law
-from darcy_implicit import capillary_implicit_step, capillary_interface_terms
+from darcy_implicit import FLOOR_ROUNDOFF, capillary_implicit_step, capillary_interface_terms
 from test_darcy_implicit import EDGE_CASES, IMPLICIT, edge_column, lens_column
 
 CAPILLARY = {'capillary_implicit_darcy': 'power_law'}
@@ -71,15 +71,15 @@ def full_column_solve(lwc, floor, saturated, interface_terms, closed, floor_pass
     '''
     The solve over the whole column, with no window and no reset of the tail. Returns the water after the solve.
     With floor_pass, the excess of each sink that the solve fills above its floor then goes on, as the rule of the
-    model states it: down for water from above, up for water from below, in proportion for both. It pays the floor
-    deficit of each next sink below its floor, and the water leaves the first sink.
+    model states it: down for water from above, up for water from below, nowhere for both. It pays the floor deficit
+    of each next sink below its floor, at most G of each face that it crosses, and the water leaves the first sink.
     '''
     from scipy.linalg import solve_banded
     span = saturated - floor
     closed = closed | (span <= 0.)
-    active = ~closed & (lwc >= floor)
+    active = ~closed & (lwc >= floor - FLOOR_ROUNDOFF * floor)
     terms = np.where(closed[:-1] | closed[1:], 0., interface_terms)
-    mobile = np.where(active, lwc - floor, 0.)
+    mobile = np.where(active, np.maximum(lwc - floor, 0.), 0.)
     banded = np.zeros((3, len(lwc)))
     banded[0, 1:] = -np.where(active[:-1], terms, 0.)
     banded[1] = np.where(active, span + np.concatenate(([0.], terms)) + np.concatenate((terms, [0.])), 1.)
@@ -92,22 +92,21 @@ def full_column_solve(lwc, floor, saturated, interface_terms, closed, floor_pass
     if not floor_pass:
         return new
     sink = ~closed & ~active
-    gain_from_above = np.concatenate(([0.], np.maximum(flux, 0.)))
-    gain_from_below = np.concatenate((np.maximum(-flux, 0.), [0.]))
     for i in range(len(lwc)):
-        gain = gain_from_above[i] + gain_from_below[i]
-        if not sink[i] or new[i] <= floor[i] or gain <= 0.:
+        from_above = i > 0 and active[i - 1] and flux[i - 1] > 0.
+        from_below = i < len(lwc) - 1 and active[i + 1] and flux[i] < 0.
+        if not sink[i] or new[i] <= floor[i] or from_above == from_below:
             continue
-        excess = new[i] - floor[i]
-        shares = {1: excess * gain_from_above[i] / gain, -1: excess * gain_from_below[i] / gain}
-        for direction, share in shares.items():
-            j = i + direction
-            while share > 0. and 0 <= j < len(lwc) and sink[j] and new[j] < floor[j]:
-                paid = min(share, floor[j] - new[j])
-                new[j] += paid
-                new[i] -= paid
-                share -= paid
-                j += direction
+        direction = 1 if from_above else -1
+        share = new[i] - floor[i]
+        j = i + direction
+        while share > 0. and 0 <= j < len(lwc) and sink[j] and new[j] < floor[j]:
+            share = min(share, terms[min(j, j - direction)])   # G of the face between j - direction and j
+            paid = min(share, floor[j] - new[j])
+            new[j] += paid
+            new[i] -= paid
+            share -= paid
+            j += direction
     return new
 
 
@@ -501,8 +500,9 @@ def test_the_floor_pass_gives_the_front_of_the_active_set_oracle_and_no_pile(dts
     '''
     A wet zone next to dry firn (the sinks of a cold column, or of a ColeouLesaffre floor): the sinks next to
     the wet zone fill, and the excess goes on to the sinks beyond them. The front is that of the oracle within
-    one node and the profile of S is within 0.06 of it (measured: front at most 2 nodes, difference at most 0.042,
-    at 1800 s and 3600 s; the sink rule alone puts a node at S = 1 at the front, with a difference of 0.8 to 0.9).
+    two nodes, the largest S beyond the front within 0.03 of it, and the profile of S within 0.06 of it (measured:
+    front at most 2 nodes, largest S beyond the front at most 0.012, difference at most 0.042, at 1800 s and
+    3600 s; the sink rule alone puts a node at S = 1 at the front, with a difference of 0.8 to 0.9).
     '''
     kwargs = dict(from_below=from_below, cold_floor=cold_floor)
     reference, _ = run_wet_zone(active_set_step, dtsub, **kwargs)
@@ -584,9 +584,8 @@ def test_the_excess_of_a_sink_pays_the_floors_of_the_sinks_below_and_stops_at_a_
 def test_the_excess_of_a_sink_below_a_wet_group_goes_up_and_a_sink_between_two_wet_nodes_keeps_it():
     '''
     Mirror of the downward case: a full node at the bottom gives its water to the sink above it, and the excess
-    goes up. A sink between two wet nodes receives water from both sides. Its walk in each direction starts at an
-    active node, so it stops at once, and the sink keeps all its excess: the split in proportion moves no water
-    there. The sinks next to the outer sides of the two wet nodes pass their excess on, away from them.
+    goes up. A sink between two wet nodes receives water from both sides, and it keeps all its excess. The sinks
+    next to the outer sides of the two wet nodes pass their excess on, away from them.
     '''
     lwc, floor, saturated, dz = sink_rows(6)
     lwc, floor, saturated = lwc[::-1].copy(), floor[::-1].copy(), saturated[::-1].copy()
@@ -652,6 +651,74 @@ def test_the_walk_of_the_floor_pass_goes_past_the_window_of_the_solve():
     assert new[8] > lwc[8] and new[3] > lwc[3]       # outside the window (nodes 4 to 7)
     assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14, abs=0)
 
+
+
+@pytest.mark.unit
+def test_the_walk_of_the_floor_pass_does_not_cross_a_face_of_zero_conductivity():
+    '''
+    A full node on top, then sinks. Node 3 has a conductivity of zero but is not closed, so the faces on each side
+    of it pass no water, and there are sinks on both sides of the face above it. The excess of the first sink pays
+    the sink above that face, and nothing reaches node 3 or the nodes below it.
+    '''
+    lwc, floor, saturated, dz = sink_rows(6)
+    conductivity = np.full(6, 1e-3)
+    conductivity[3] = 0.
+    terms = capillary_interface_terms(conductivity, dz, 3600., 0.07)
+    new, _ = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, np.zeros(6, dtype=bool))
+    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14, abs=0)
+    assert new[2] == floor[2] and new[1] > floor[1]      # the walk pays node 2, and the first sink keeps the rest
+    assert np.array_equal(new[3:], lwc[3:])
+
+
+def run_low_conductivity_layer(step_function, dtsub, cold_floor, ratio, layer, hours=4):
+    '''The wet zone column, with nodes 22 on (`layer` nodes) at `ratio` times the conductivity. Water at the end.'''
+    lwc, floor, saturated, dz = wet_zone_column(cold_floor=cold_floor)
+    conductivity = np.full(len(lwc), 3e-5)
+    conductivity[22:22 + layer] *= ratio
+    terms = capillary_interface_terms(conductivity, dz, dtsub, 0.07)
+    closed = np.zeros(len(lwc), dtype=bool)
+    for _ in range(int(3600 * hours / dtsub)):
+        lwc = step_function(lwc, floor, saturated, terms, closed)
+    return lwc
+
+
+@pytest.mark.scheme
+@pytest.mark.parametrize('cold_floor, ratio, layer', [(0.005, 4e-5, 1), (0.005, 1e-3, 3), (0.05, 1e-3, 3)])
+def test_the_floor_pass_does_not_carry_water_through_a_layer_of_low_conductivity(cold_floor, ratio, layer):
+    '''
+    A wet zone above cold sinks, with a layer of low conductivity (not closed) two nodes below it, at 1800 s. The
+    water that reaches the nodes below the layer in 4 h stays within 0.5 mm of the oracle (measured: at most 0.27 mm
+    more than the oracle; with no limit on the water that crosses a face, 5.6 to 18 mm more).
+    '''
+    start, _, _, _ = wet_zone_column(cold_floor=cold_floor)
+    below = slice(22 + layer, None)
+    reference = run_low_conductivity_layer(active_set_step, 1800., cold_floor, ratio, layer)
+    result = run_low_conductivity_layer(model_step, 1800., cold_floor, ratio, layer)
+    gain, gain_reference = result[below].sum() - start[below].sum(), reference[below].sum() - start[below].sum()
+    assert gain == pytest.approx(gain_reference, abs=5e-4)
+
+
+@pytest.mark.unit
+def test_a_node_a_round_off_below_its_floor_is_at_its_floor():
+    '''
+    Four wet nodes on top, then a node two ulp below its floor, then nodes at their floor. At 1800 s, as a sink, the
+    node would drain the wet nodes and fill to saturation (measured: two nodes at S = 1). It is at its floor
+    instead: the result is that of the node exactly at its floor, and no node goes above S = 0.3.
+    '''
+    n = 10
+    dz, floor, saturated = np.full(n, 0.01), np.full(n, 0.0005), np.full(n, 0.004)
+    lwc = floor.copy()
+    lwc[:4] = floor[:4] + 0.6 * (saturated[:4] - floor[:4])
+    at_floor = lwc.copy()
+    lwc[4] = floor[4] * (1. - 4e-16)
+    assert 0. < floor[4] - lwc[4] < 1e-12 * floor[4]
+    terms = capillary_interface_terms(np.full(n, 3e-5), dz, 1800., 0.07)
+    closed = np.zeros(n, dtype=bool)
+    new, _ = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, closed)
+    reference, _ = capillary_implicit_step(at_floor, floor, saturated, saturated.copy(), terms, closed)
+    assert np.allclose(new, reference, rtol=1e-12, atol=0)
+    assert np.max((new - floor) / (saturated - floor)) < 0.3
+    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14, abs=0)
 
 ### The scheme: the oracle ###
 

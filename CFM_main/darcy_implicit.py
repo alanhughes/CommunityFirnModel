@@ -198,6 +198,7 @@ def capillary_interface_terms(conductivity, thickness, dtsub, capillary_head):
 
 
 CAPILLARY_WATER_THRESHOLD = 1e-14   # [m of water] Water that the capillary solve puts in a dry node of floor zero, below this, is a numerical tail of the diffusion (it goes down to 1e-85 m). Without the reset, every dry node of a column wakes the gravity sweep. The value is far below any physical amount of water, and far above the round-off of a wet node (about 1e-18 m at 1e-2 m). A value from 1e-16 to 1e-12 m gives practically the same results.
+FLOOR_ROUNDOFF = 1e-12   # [fraction of the floor] A node this close below its floor is at its floor (active, with no mobile water). The floor pass can leave a node a round-off below its floor (about 1e-18 m at 1e-3 m); as a sink it would drain its wet neighbours again. The value is far above that round-off and far below any physical deficit.
 
 
 def capillary_implicit_step(lwc, floor, saturated, capacity, interface_terms, closed):
@@ -209,7 +210,8 @@ def capillary_implicit_step(lwc, floor, saturated, capacity, interface_terms, cl
 
     Each node is one of three kinds:
 
-    - Active: the water is at or above the floor. It is an unknown of the solve.
+    - Active: the water is at or above the floor (or less than FLOOR_ROUNDOFF times the floor below
+      it, with no mobile water). It is an unknown of the solve.
     - Sink: the water is below the floor. The solve holds it at S = 0 for the whole sub-step. It
       takes the water that its active neighbours give it, and that water pays its floor first. Two
       sinks exchange no water. The floor pass (below) handles a sink that the solve fills above
@@ -221,21 +223,23 @@ def capillary_implicit_step(lwc, floor, saturated, capacity, interface_terms, cl
 
     Floor pass. The solve holds a sink at S = 0, so a sink drains the mobile water of the wet nodes
     next to it. A sink can end above its floor, with a pile of water. After the solve, for each
-    sink with water above its floor, the excess (water minus floor) goes away from the nodes that
+    sink with water above its floor, the excess (water minus floor) goes away from the node that
     gave it:
 
     - Down, if the sink received water from above. Up, if it received water from below. If it
-      received water from both sides, the excess is split in proportion to the water from each
-      side. Such a sink has an active node on each side, so both walks stop at once and it keeps
-      its excess.
-    - In that direction, the excess pays the floor deficit of each next node. The walk stops at
-      a closed node, an active node, a sink that is at its floor, the end of the column, or when
-      the excess is spent. The walk can go past the window of the solve.
+      received water from both sides, it keeps its excess.
+    - In that direction, the excess pays the floor deficit of each next node. The water that
+      crosses a face is at most the G of that face, the most that the face passes in a sub-step
+      (zero at a closed node or at a conductivity of zero). The walk stops at a closed node, an
+      active node, a sink that is at its floor, the end of the column, or when the excess is spent.
+      The walk can go past the window of the solve.
     - The water that the walk moves leaves the first sink. The rest stays in it. It is above the
       floor, so it is mobile in the next sub-step.
 
     The pass moves water between nodes, so it keeps the water exactly. It acts on the whole
-    column, not only on the window.
+    column, not only on the window. It does not help a sink whose next node is an active node with
+    no water (a dry node of floor zero, which occurs only with IrrVal 0 and ColeouLesaffre false):
+    the walk stops there, and the pile stays in the sink for the sub-step.
 
     The solve covers only the part of the column that can change. A sink or a closed node passes
     no water on in the sub-step. So the solve takes each group of active nodes (between sinks and
@@ -283,10 +287,10 @@ def capillary_implicit_step(lwc, floor, saturated, capacity, interface_terms, cl
     '''
     span = saturated - floor
     closed = closed | (span <= 0.)
-    active = ~closed & (lwc >= floor)
+    active = ~closed & (lwc >= floor - FLOOR_ROUNDOFF * floor)   # a node a round-off below its floor is at its floor
     terms = np.where(closed[:-1] | closed[1:], 0., interface_terms)
 
-    mobile = np.where(active, lwc - floor, 0.)   # span times S at the start [m]
+    mobile = np.where(active, np.maximum(lwc - floor, 0.), 0.)   # span times S at the start [m]
     if not np.any(mobile > 0.):
         return lwc.copy(), 0.   # no water to move: S = 0 everywhere is the exact solution
 
@@ -321,21 +325,20 @@ def capillary_implicit_step(lwc, floor, saturated, capacity, interface_terms, cl
     flux_all = np.zeros(len(lwc) - 1)
     flux_all[lo:hi - 1] = flux
     for i in np.flatnonzero(sink & (lwc_new > floor)):
-        excess = lwc_new[i] - floor[i]
-        from_above = max(flux_all[i - 1], 0.) if i > 0 else 0.
-        from_below = max(-flux_all[i], 0.) if i < len(lwc) - 1 else 0.
-        if from_above + from_below <= 0.:
-            continue
-        down = excess * from_above / (from_above + from_below)   # the share of the water that came from above
-        up = excess - down
-        for direction, remaining in ((1, down), (-1, up)):
-            j = i + direction
-            while remaining > 0. and 0 <= j < len(lwc) and sink[j] and lwc_new[j] < floor[j]:
-                put = min(remaining, floor[j] - lwc_new[j])
-                lwc_new[j] += put
-                lwc_new[i] -= put
-                remaining -= put
-                j += direction
+        from_above = i > 0 and active[i - 1] and flux_all[i - 1] > 0.             # only an active node gives water:
+        from_below = i < len(lwc) - 1 and active[i + 1] and flux_all[i] < 0.     # between sinks, the flux is round-off
+        if from_above == from_below:
+            continue   # water from both sides (the sink keeps its excess), or from neither
+        direction = 1 if from_above else -1
+        remaining = lwc_new[i] - floor[i]
+        j = i + direction
+        while remaining > 0. and 0 <= j < len(lwc) and sink[j] and lwc_new[j] < floor[j]:
+            remaining = min(remaining, terms[j - 1 if direction == 1 else j])   # no more than G of the face: the most it passes in a sub-step
+            put = min(remaining, floor[j] - lwc_new[j])
+            lwc_new[j] += put
+            lwc_new[i] -= put
+            remaining -= put
+            j += direction
 
     ### Tail of the diffusion in dry nodes of floor zero: set it back to zero in the node above
     dry = (lwc[lo:hi] <= 0.) & (floor[lo:hi] <= 0.) & ~closed[lo:hi]
