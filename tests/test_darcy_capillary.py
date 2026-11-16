@@ -67,8 +67,13 @@ def test_a_node_of_low_conductivity_limits_the_exchange_through_the_step():
     assert moved[1] < 1e-2 * moved[0]     # the arithmetic mean would give about the same as the first case
 
 
-def full_column_solve(lwc, floor, saturated, interface_terms, closed):
-    '''The solve over the whole column, with no window and no reset of the tail. Returns the water after the solve.'''
+def full_column_solve(lwc, floor, saturated, interface_terms, closed, floor_pass=False):
+    '''
+    The solve over the whole column, with no window and no reset of the tail. Returns the water after the solve.
+    With floor_pass, the excess of each sink that the solve fills above its floor then goes on, as the rule of the
+    model states it: down for water from above, up for water from below, in proportion for both. It pays the floor
+    deficit of each next sink below its floor, and the water leaves the first sink.
+    '''
     from scipy.linalg import solve_banded
     span = saturated - floor
     closed = closed | (span <= 0.)
@@ -84,13 +89,36 @@ def full_column_solve(lwc, floor, saturated, interface_terms, closed):
     new = lwc.copy()
     new[:-1] -= flux
     new[1:] += flux
+    if not floor_pass:
+        return new
+    sink = ~closed & ~active
+    gain_from_above = np.concatenate(([0.], np.maximum(flux, 0.)))
+    gain_from_below = np.concatenate((np.maximum(-flux, 0.), [0.]))
+    for i in range(len(lwc)):
+        gain = gain_from_above[i] + gain_from_below[i]
+        if not sink[i] or new[i] <= floor[i] or gain <= 0.:
+            continue
+        excess = new[i] - floor[i]
+        shares = {1: excess * gain_from_above[i] / gain, -1: excess * gain_from_below[i] / gain}
+        for direction, share in shares.items():
+            j = i + direction
+            while share > 0. and 0 <= j < len(lwc) and sink[j] and new[j] < floor[j]:
+                paid = min(share, floor[j] - new[j])
+                new[j] += paid
+                new[i] -= paid
+                share -= paid
+                j += direction
     return new
 
 
 @pytest.mark.unit
 def test_the_window_gives_the_result_of_the_solve_over_the_whole_column():
-    '''With sinks and closed nodes around the wet part, the window is exact. Nothing outside it changes.'''
+    '''
+    With sinks and closed nodes around the wet part, the window is exact: the step gives the solve over the whole
+    column with the floor pass. Far from the wet groups, only the sinks that the floor pass pays change.
+    '''
     rng = np.random.default_rng(11)
+    walks = 0
     for _ in range(40):
         n = 40
         lwc, floor, saturated, capacity, conductivity, dz, closed = random_column(rng, n=n, closed_fraction=0.05)
@@ -100,31 +128,44 @@ def test_the_window_gives_the_result_of_the_solve_over_the_whole_column():
         first, second = int(rng.integers(3, 12)), int(rng.integers(22, 34))
         for start in (first, second):
             lwc[start:start + 4] = floor[start:start + 4] + 0.5 * (saturated[start:start + 4] - floor[start:start + 4])
-        terms = capillary_interface_terms(1e-9 * conductivity, dz, 1800., 0.1)   # a low conductivity: no sink ends above its floor
+        terms = capillary_interface_terms(conductivity, dz, 1800., 0.1)
         windowed, excess = capillary_implicit_step(lwc, floor, saturated, 10. * saturated, terms, closed)   # no capacity pass
-        reference = full_column_solve(lwc, floor, saturated, terms, closed)
+        reference = full_column_solve(lwc, floor, saturated, terms, closed, floor_pass=True)
         assert excess == 0.
         assert np.allclose(windowed, reference, rtol=1e-12, atol=1e-18)
         assert np.sum(windowed) == pytest.approx(lwc.sum(), rel=1e-13, abs=0)
         far = np.ones(n, dtype=bool)
-        far[max(first - 2, 0):first + 6] = False
-        far[second - 2:second + 6] = False
-        assert np.array_equal(windowed[far], lwc[far])
+        far[max(first - 1, 0):first + 5] = False
+        far[second - 1:second + 5] = False
+        changed = far & (windowed != lwc)
+        assert np.all(windowed[changed] <= floor[changed])   # the floor pass pays a sink up to its floor, no more
+        walks += changed.sum()
+    assert walks > 0   # the floor pass acts in these columns
 
 
 @pytest.mark.unit
 def test_the_window_does_not_solve_a_column_with_a_wet_group_between_sinks():
-    '''One wet group between two sinks: only the nodes of the group and the two sinks change.'''
-    n = 12
+    '''
+    One wet group between two sinks: the solve changes only the nodes of the group and the two sinks. The floor pass
+    then pays the sinks beyond, up to the top of the column and down to where the excess is spent.
+    '''
+    n = 24
     floor = np.full(n, 0.0005)
     saturated = floor + 0.004
     lwc = np.full(n, 0.0002)                  # all sinks
     lwc[5:7] = [0.0045, 0.003]               # one wet group of two nodes
-    terms = capillary_interface_terms(np.full(n, 1e-8), np.full(n, 0.01), 600., 0.07)   # no sink ends above its floor
-    new, excess = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, np.zeros(n, dtype=bool))
+    terms = capillary_interface_terms(np.full(n, 1e-4), np.full(n, 0.01), 600., 0.07)
+    closed = np.zeros(n, dtype=bool)
+    new, excess = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, closed)
+    solve_only = full_column_solve(lwc, floor, saturated, terms, closed)
+    assert np.array_equal(solve_only[:4], lwc[:4]) and np.array_equal(solve_only[8:], lwc[8:])
+    assert np.allclose(new, full_column_solve(lwc, floor, saturated, terms, closed, floor_pass=True), rtol=1e-12, atol=0)
     assert excess == 0.
-    assert np.array_equal(new[:4], lwc[:4]) and np.array_equal(new[8:], lwc[8:])
-    assert new[4] > lwc[4] and new[7] > lwc[7]
+    assert np.array_equal(new[:4], floor[:4])            # paid up to the top of the column
+    assert new[4] > floor[4] and new[7] > floor[7]       # the first sinks keep the rest
+    paid = np.flatnonzero(new[8:] > lwc[8:]) + 8        # the sinks below that the walk pays, from node 8 on
+    assert len(paid) > 1 and np.array_equal(paid, np.arange(8, paid[-1] + 1))
+    assert np.all(new[paid[:-1]] == floor[paid[:-1]]) and paid[-1] < n - 1   # the excess is spent before the end
     assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14, abs=0)
 
 
@@ -495,8 +536,6 @@ def test_the_floor_pass_keeps_the_water_exactly(dtsub):
         new, excess = capillary_implicit_step(lwc, floor, saturated, 10. * saturated, terms, closed)   # no capacity pass
         assert excess == 0.
         assert new.sum() == pytest.approx(lwc.sum(), rel=1e-13, abs=0)
-    new, _ = capillary_implicit_step(*wet_zone_column()[:3], capacity=None, interface_terms=None, closed=None) \
-        if False else (None, None)
 
 
 def sink_rows(nodes):
@@ -526,6 +565,13 @@ def test_the_excess_of_a_sink_pays_the_floors_of_the_sinks_below_and_stops_at_a_
     assert np.all(new[paid[:-1]] == floor[paid[:-1]])   # each sink that the walk passed is at its floor
     assert np.all(new[paid[-1] + 1:] == lwc[paid[-1] + 1:])
 
+    at_floor = lwc.copy()
+    at_floor[2] = floor[2]   # a sink at its floor stops the walk: the sinks below it get nothing
+    new_floor, _ = capillary_implicit_step(at_floor, floor, saturated, saturated.copy(), terms, no_closed)
+    assert new_floor[2] == floor[2]
+    assert np.array_equal(new_floor[3:], at_floor[3:])
+    assert new_floor.sum() == pytest.approx(at_floor.sum(), rel=1e-14, abs=0)
+
     closed = no_closed.copy()
     closed[2] = True
     new_closed, _ = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, closed)
@@ -535,11 +581,12 @@ def test_the_excess_of_a_sink_pays_the_floors_of_the_sinks_below_and_stops_at_a_
 
 
 @pytest.mark.unit
-def test_the_excess_of_a_sink_below_a_wet_group_goes_up_and_the_split_follows_the_water_from_each_side():
+def test_the_excess_of_a_sink_below_a_wet_group_goes_up_and_a_sink_between_two_wet_nodes_keeps_it():
     '''
     Mirror of the downward case: a full node at the bottom gives its water to the sink above it, and the excess
-    goes up. A sink between two wet nodes of unequal saturation splits its excess in proportion to what it
-    received from each side, and pays the sinks on both sides.
+    goes up. A sink between two wet nodes receives water from both sides. Its walk in each direction starts at an
+    active node, so it stops at once, and the sink keeps all its excess: the split in proportion moves no water
+    there. The sinks next to the outer sides of the two wet nodes pass their excess on, away from them.
     '''
     lwc, floor, saturated, dz = sink_rows(6)
     lwc, floor, saturated = lwc[::-1].copy(), floor[::-1].copy(), saturated[::-1].copy()
@@ -549,7 +596,7 @@ def test_the_excess_of_a_sink_below_a_wet_group_goes_up_and_the_split_follows_th
     assert new[4] >= floor[4]
     assert new[3] > lwc[3]                               # the walk goes up, to the sinks above the first sink
 
-    # both sides: a sink at node 4 between a full node at 3 and a node at 5 that is half full, sinks above and below
+    # a sink at node 4 between a full node at 3 and a node at 5 with some mobile water, sinks above and below
     n = 9
     floor = np.full(n, 0.0005)
     saturated = floor + 0.004
@@ -557,9 +604,34 @@ def test_the_excess_of_a_sink_below_a_wet_group_goes_up_and_the_split_follows_th
     lwc[3], lwc[5] = saturated[3], floor[5] + 0.001
     lwc[4] = 0.00049                                     # a sink very close to its floor
     terms = capillary_interface_terms(np.full(n, 1e-3), np.full(n, 0.01), 3600., 0.07)
-    new, _ = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, np.zeros(n, dtype=bool))
+    closed = np.zeros(n, dtype=bool)
+    new, _ = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, closed)
+    solve_only = full_column_solve(lwc, floor, saturated, terms, closed)
     assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14, abs=0)
-    assert new[2] > lwc[2] and new[6] > lwc[6]           # both sides pay the sinks beyond the nodes that gave water
+    assert solve_only[4] > floor[4] + 0.002              # the solve fills it far above its floor
+    assert new[4] == solve_only[4]                       # and it keeps all of that
+    assert new[1] > lwc[1] and new[7] > lwc[7]           # the outer sinks 2 and 6 pay the sinks beyond them
+    assert new[2] < solve_only[2] and new[6] < solve_only[6]
+
+
+@pytest.mark.unit
+def test_the_walk_of_the_floor_pass_stops_at_a_sink_that_the_solve_filled_above_its_floor():
+    '''
+    Two sinks side by side between two full nodes, in a mirror-symmetric column. The solve fills both above their
+    floors. The excess of each goes away from its full node, but the other sink is above its floor, so the walk stops
+    there: both keep their water and the result stays symmetric.
+    '''
+    n = 6
+    floor = np.full(n, 0.0005)
+    saturated = floor + 0.004
+    lwc = np.full(n, 0.0002)
+    lwc[1], lwc[4] = saturated[1], saturated[4]
+    lwc[2:4] = 0.0004
+    terms = capillary_interface_terms(np.full(n, 1e-3), np.full(n, 0.01), 3600., 0.07)
+    new, _ = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, np.zeros(n, dtype=bool))
+    assert new[2] > floor[2] and new[3] > floor[3]
+    assert np.allclose(new, new[::-1], rtol=1e-12, atol=0)
+    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14, abs=0)
 
 
 @pytest.mark.unit

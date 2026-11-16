@@ -226,7 +226,8 @@ def capillary_implicit_step(lwc, floor, saturated, capacity, interface_terms, cl
 
     - Down, if the sink received water from above. Up, if it received water from below. If it
       received water from both sides, the excess is split in proportion to the water from each
-      side.
+      side. Such a sink has an active node on each side, so both walks stop at once and it keeps
+      its excess.
     - In that direction, the excess pays the floor deficit of each next node. The walk stops at
       a closed node, an active node, a sink that is at its floor, the end of the column, or when
       the excess is spent. The walk can go past the window of the solve.
