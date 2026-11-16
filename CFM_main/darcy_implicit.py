@@ -197,7 +197,7 @@ def capillary_interface_terms(conductivity, thickness, dtsub, capillary_head):
     return dtsub * k_face * capillary_head / (0.5 * (dz_upper + dz_lower))
 
 
-CAPILLARY_WATER_THRESHOLD = 1e-14   # [m of water] Water that the capillary solve puts in a dry node of floor zero, below this, is a numerical tail of the diffusion (it goes down to 1e-85 m). Without the reset, every dry node of a column wakes the gravity sweep.
+CAPILLARY_WATER_THRESHOLD = 1e-14   # [m of water] Water that the capillary solve puts in a dry node of floor zero, below this, is a numerical tail of the diffusion (it goes down to 1e-85 m). Without the reset, every dry node of a column wakes the gravity sweep. The value is far below any physical amount of water, and far above the round-off of a wet node (about 1e-18 m at 1e-2 m). A value from 1e-16 to 1e-12 m gives practically the same results.
 
 
 def capillary_implicit_step(lwc, floor, saturated, capacity, interface_terms, closed):
