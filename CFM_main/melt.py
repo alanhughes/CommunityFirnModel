@@ -20,7 +20,8 @@ from darcy_funcs import runoffZuoOerlemans
 from darcy_funcs import runoffDarcy
 from darcy_funcs import flux_bisection
 from darcy_funcs import flux_newtonraphson
-from darcy_implicit import implicit_gravity_sweep, implicit_lateral_runoff, nodes_with_lateral_runoff
+from darcy_implicit import (capillary_implicit_step, capillary_interface_terms, implicit_gravity_sweep,
+                            implicit_lateral_runoff, nodes_with_lateral_runoff)
 
 '''
 Functions to handle meltwater percolation through the firn column.
@@ -985,10 +986,12 @@ _DARCY_DEFAULTS = {
     'Ksat_darcy': 'Calonne', 'Ksat_k0_darcy': 5.56e-11, 'viscosity_darcy': 0.001792,
     'krel_darcy': 'vanGenuchten', 'krel_exponent_darcy': 2.,
     'snapshot_fraction_darcy': 0.5, 'flow_step_darcy': 'explicit', 'dtsub_implicit_darcy': 1800.,
-}  # the values the scheme used before these options were configurable (snapshot_fraction_darcy, flow_step_darcy and dtsub_implicit_darcy are new)
+    'capillary_implicit_darcy': 'none', 'capillary_pressure_darcy': 700.,
+}  # the values the scheme used before these options were configurable (snapshot_fraction_darcy, flow_step_darcy, dtsub_implicit_darcy, capillary_implicit_darcy and capillary_pressure_darcy are new)
 _KSAT_LAWS_DARCY = ('Calonne', 'power_law')        # values of Ksat_darcy
 _KREL_LAWS_DARCY = ('vanGenuchten', 'power_law')   # values of krel_darcy
 _FLOW_STEPS_DARCY = ('explicit', 'implicit_gravity')   # values of flow_step_darcy
+_CAPILLARY_LAWS_DARCY = ('none', 'power_law')          # values of capillary_implicit_darcy
 _darcy_missing_reported = set()
 
 def _darcy_option(config, key):
@@ -1007,11 +1010,13 @@ def _darcy_option(config, key):
 
 def _implicit_flow_step(self, liq_input, imptop, imp, ncv, rg, rhodcy, phi, phidcy, theta_s, LWC_i, cp_i, dtsub,
                         Ksat_law, Ksat_k0, viscosity, krel_law, krel_exponent, lat_runoff, slope_proxy,
-                        runoff_method):
+                        runoff_method, capillary_head=None):
     '''
     One sub-step of the implicit gravity flow of darcyscheme (flow_step_darcy "implicit_gravity").
     It changes self.LWC. The arguments are the quantities of the sub-step in darcyscheme. cp_i is
     the specific heat of ice that the refreezing block of that sub-step uses [J kg-1 K-1].
+    capillary_head is h_c = c / (rho_w g) of the capillary step [m], or None for no capillary
+    flow. The capillary step runs after the sweep and before the lateral runoff.
 
     Returns
     -------
@@ -1057,9 +1062,17 @@ def _implicit_flow_step(self, liq_input, imptop, imp, ncv, rg, rhodcy, phi, phid
         surface_input, blocked, lwc_held)
     runoff0 = runoff0 + surface_excess   # water that the column cannot take
 
+    if capillary_head is not None:
+        closed = np.zeros(ncv, dtype=bool)   # the capillary flow does not pass an impermeable node
+        closed[imp] = True
+        interface_terms = capillary_interface_terms(bigk_s, self.dz, dtsub, capillary_head)
+        self.LWC, surface_excess = capillary_implicit_step(
+            self.LWC, LWC_i + lwc_held, lwc_saturated, lwc_capacity, interface_terms, closed)
+        runoff0 = runoff0 + surface_excess   # water that the capillary flow pushes out at the surface
+
     runoff1 = 0.
     if lat_runoff:
-        ### Lateral runoff on the state after the sweep. Water that the refreezing freezes, and the
+        ### Lateral runoff on the state after the sweep and the capillary step. Water that the refreezing freezes, and the
         ### irreducible water, stay in the node.
         lwc_floor     = np.minimum(self.LWC, LWC_i + lwc_held)
         theta_e_after = (self.LWC - LWC_i) / (lwc_saturated - LWC_i)    # effective saturation after the sweep
@@ -1215,7 +1228,8 @@ def darcyscheme(self,iii):
     flow_step_darcy : str
         "explicit" (default): the limiting-flux scheme described above.
         "implicit_gravity": backward Euler gravity-only flow, swept from the top
-        node down (see darcy_implicit.py). It has no capillary flow. The input enters the
+        node down (see darcy_implicit.py). Its capillary flow is the option
+        capillary_implicit_darcy, which is off by default. The input enters the
         top node of the sweep, the limiting flux is not solved, and the water that the
         refreezing will freeze stays in its node. Lateral runoff is applied after the sweep.
         The sub-step is fixed at dtsub_implicit_darcy (dtsub_darcy, dtmin_darcy and
@@ -1236,6 +1250,50 @@ def darcyscheme(self,iii):
     dtsub_implicit_darcy : float [s]
         Sub-step of the implicit gravity flow. Default 1800. It is used only with
         flow_step_darcy "implicit_gravity".
+
+    capillary_implicit_darcy : str
+        "none" (default): gravity flow only. "power_law": capillary flow after the gravity
+        sweep of each sub-step and before the lateral runoff, with the capillary pressure
+        p_c = c / S of Meyer and Hewitt (2017). S is the saturation of the mobile water,
+        (water - floor) / (saturated - floor). The floor is the irreducible water plus the
+        water that the cold content of the node freezes. The step is one linear tridiagonal
+        solve for S (backward Euler, no iteration). The capillary flux is -K_sat h_c dS/dz,
+        with h_c = c / (rho_w g), where K_sat is the saturated conductivity of the run
+        (Ksat_darcy). The conductivity at an interface is the harmonic mean of the two nodes,
+        weighted by thickness. A value other than "none" or "power_law" stops the run.
+        - An impermeable node exchanges no capillary flow, and nor does a node with no span
+          (a floor at or above saturation, for example a very cold node). The surface and the
+          bottom of the column have no capillary flow.
+        - Sink rule: a node with water below its floor is held at S = 0 in the solve. It
+          takes the water that its neighbours give it, and that water pays its floor first.
+          Caution for sub-steps of 1800 s or more: the sink is held at S = 0 for the whole
+          solve, so it drains the mobile water of the wet nodes near it into itself. It can
+          fill to saturation, and the excess goes to the nodes above it. Several nodes at the
+          wetting front can end saturated while the nodes above them are near their floor.
+          The effect grows with the sub-step and with thin nodes, and it is small at 60 s.
+        - Water above the capacity of a node goes to the node above it, and the water that
+          the top node cannot take is surface runoff, as in the gravity sweep. Water does
+          not cross an impermeable node or a node with no span: it goes back down in its own
+          stretch of nodes.
+        - The solve covers only the groups of nodes that have mobile water, with the sinks
+          next to them. In dry firn with a floor of zero, a water content of less than 1e-14 m
+          that the solve puts in a node that had none is set back to zero.
+        - With flow_step_darcy "explicit", the key has no effect. A message is printed once
+          in each run. The explicit step always has its own van Genuchten capillary flow.
+        - The step uses k_r = S^2. If krel_darcy is not "power_law" with krel_exponent_darcy 2,
+          the gravity flow and the capillary flow use different k_r. A message is printed
+          once in each run, and the run continues.
+        - Caution: K_sat is that of the run. With Ksat_darcy "Calonne" it is about 1700 times
+          that of "power_law" at a grain radius of 1 mm (about 0.09 against 5.5e-5 m s-1 at
+          400 kg m-3), so the capillary flow is about 1700 times larger. The ratio goes with
+          the square of the grain radius.
+
+    capillary_pressure_darcy : float [Pa]
+        The coefficient c of p_c = c / S. Default 700 (gamma / d_p of Meyer and Hewitt, 2017).
+        It is one value for the whole column. It is not linked to Ksat_k0_darcy: if you
+        change Ksat_k0_darcy, set this value too, if the link matters. It is read only
+        with flow_step_darcy "implicit_gravity" and capillary_implicit_darcy "power_law".
+        A value of zero or below stops the run.
 
     With Ksat_darcy and krel_darcy at "power_law", the flux law is that of
     Meyer and Hewitt (2017) only if theta_e is their saturation phi_w/phi.
@@ -1322,6 +1380,7 @@ def darcyscheme(self,iii):
     krel_law        = _darcy_option(self.c, 'krel_darcy')           # law for the relative hydraulic conductivity
     krel_exponent   = _darcy_option(self.c, 'krel_exponent_darcy')  # exponent of theta_e, power_law only
     flow_step       = _darcy_option(self.c, 'flow_step_darcy')      # 'explicit' (limiting flux) or 'implicit_gravity'
+    capillary_law   = _darcy_option(self.c, 'capillary_implicit_darcy')  # 'none' or 'power_law', implicit step only
     ### END USER CHOICES ###
     if Ksat_law not in _KSAT_LAWS_DARCY:
         raise ValueError(f'Ksat_darcy is "{Ksat_law}". It must be one of {_KSAT_LAWS_DARCY}.')
@@ -1329,7 +1388,10 @@ def darcyscheme(self,iii):
         raise ValueError(f'krel_darcy is "{krel_law}". It must be one of {_KREL_LAWS_DARCY}.')
     if flow_step not in _FLOW_STEPS_DARCY:
         raise ValueError(f'flow_step_darcy is "{flow_step}". It must be one of {_FLOW_STEPS_DARCY}.')
+    if capillary_law not in _CAPILLARY_LAWS_DARCY:
+        raise ValueError(f'capillary_implicit_darcy is "{capillary_law}". It must be one of {_CAPILLARY_LAWS_DARCY}.')
     implicit_flow = (flow_step == 'implicit_gravity')   # fixed sub-step, implicit gravity flow, no limiting flux
+    capillary_head = None   # h_c = c / (rho_w g) of the capillary step [m]; None: no capillary step
     dtsub_fixed = dtsub               # sub-step of the implicit flow step [s]
     if implicit_flow:
         dtsub_fixed = _darcy_option(self.c, 'dtsub_implicit_darcy')   # [s] fixed sub-step of the implicit flow step
@@ -1340,6 +1402,20 @@ def darcyscheme(self,iii):
             self.implicit_long_substep_reported = True   # the message is printed once in each run
             print(f'dtsub_implicit_darcy is {dtsub:g} s. With a sub-step above 3600 s, the runoff and the '
                   'refreezing can be wrong on days when melt reaches an ice lens. See the docstring of darcyscheme.')
+        if capillary_law == 'power_law':
+            capillary_pressure = _darcy_option(self.c, 'capillary_pressure_darcy')   # [Pa] c of p_c = c / S
+            if not capillary_pressure > 0:
+                raise ValueError(f'capillary_pressure_darcy is {capillary_pressure}. It must be above 0 Pa.')
+            capillary_head = capillary_pressure / (RHO_W_KGM * GRAVITY)
+            if (krel_law != 'power_law' or krel_exponent != 2) and not getattr(self, 'capillary_krel_reported', False):
+                self.capillary_krel_reported = True   # the message is printed once in each run
+                print('capillary_implicit_darcy is "power_law" with a krel_darcy other than "power_law" with '
+                      'krel_exponent_darcy 2. The capillary flow uses k_r = S^2, and the gravity flow uses the '
+                      'k_r of the run. See the docstring of darcyscheme.')
+    elif capillary_law != 'none' and not getattr(self, 'capillary_explicit_reported', False):
+        self.capillary_explicit_reported = True   # the message is printed once in each run
+        print(f'capillary_implicit_darcy is "{capillary_law}" with flow_step_darcy "explicit". '
+              'The key has no effect with the explicit flow step.')
     n_substeps  = 0   # number of sub-steps in this call
     root_solves = 0   # number of root solves of the implicit flow step
     snapshot_at = None   # time in the step at which the snapshot outputs are taken [s]; None: no snapshot
@@ -1676,7 +1752,8 @@ def darcyscheme(self,iii):
         else:
             runoff0, runoff1, solves = _implicit_flow_step(
                 self, liq_input, imptop, imp, ncv, rg, rhodcy, phi, phidcy, theta_s, LWC_i, cp_i, dtsub,
-                Ksat_law, Ksat_k0, viscosity, krel_law, krel_exponent, lat_runoff, slope_proxy, runoff_method)
+                Ksat_law, Ksat_k0, viscosity, krel_law, krel_exponent, lat_runoff, slope_proxy, runoff_method,
+                capillary_head)
             root_solves += solves
 
             ifl = np.zeros(ncv, dtype=bool)   # no limiting flux: the sub-step adaptation below does not apply
