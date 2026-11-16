@@ -1266,11 +1266,16 @@ def darcyscheme(self,iii):
           bottom of the column have no capillary flow.
         - Sink rule: a node with water below its floor is held at S = 0 in the solve. It
           takes the water that its neighbours give it, and that water pays its floor first.
-          Caution for sub-steps of 1800 s or more: the sink is held at S = 0 for the whole
-          solve, so it drains the mobile water of the wet nodes near it into itself. It can
-          fill to saturation, and the excess goes to the nodes above it. Several nodes at the
-          wetting front can end saturated while the nodes above them are near their floor.
-          The effect grows with the sub-step and with thin nodes, and it is small at 60 s.
+          Floor pass: if the solve leaves a sink above its floor, the excess (water minus
+          floor) goes away from the node that gave it: down if the sink received water from
+          above, up if from below. A sink that received water from both sides keeps its
+          excess. It pays the floors of the next sinks in that direction, and the water that
+          crosses a face is at most the most that the face passes in a sub-step. The walk stops
+          at a closed node, an active node, a sink at its floor, the end of the column, or when
+          the excess is spent. The water that moves leaves the first sink. This makes the pile
+          of water at a wetting front much smaller at sub-steps of 1800 s and 3600 s. It does
+          not act when the next node is dry with a floor of zero (IrrVal 0 and ColeouLesaffre
+          false).
         - Water above the capacity of a node goes to the node above it, and the water that
           the top node cannot take is surface runoff, as in the gravity sweep. Water does
           not cross an impermeable node or a node with no span: it goes back down in its own
