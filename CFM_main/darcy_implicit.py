@@ -212,15 +212,29 @@ def capillary_implicit_step(lwc, floor, saturated, capacity, interface_terms, cl
     - Active: the water is at or above the floor. It is an unknown of the solve.
     - Sink: the water is below the floor. The solve holds it at S = 0 for the whole sub-step. It
       takes the water that its active neighbours give it, and that water pays its floor first. Two
-      sinks exchange no water. Caution for sub-steps of 1800 s or more: because a sink is held at
-      S = 0, it drains the mobile water of the wet nodes near it into itself. It can fill to
-      saturation, and the excess goes to the nodes above it. Several nodes at a wetting front can
-      end saturated while the nodes above them are near their floor. The effect grows with the
-      sub-step and with thin nodes, and it is small at a sub-step of 60 s.
+      sinks exchange no water. The floor pass (below) handles a sink that the solve fills above
+      its floor.
     - Closed: an impermeable node, or a node with no span (a floor at or above saturation). It
       exchanges no water.
 
     A dry node with a floor of zero is active, with S = 0.
+
+    Floor pass. The solve holds a sink at S = 0, so a sink drains the mobile water of the wet nodes
+    next to it. A sink can end above its floor, with a pile of water. After the solve, for each
+    sink with water above its floor, the excess (water minus floor) goes away from the nodes that
+    gave it:
+
+    - Down, if the sink received water from above. Up, if it received water from below. If it
+      received water from both sides, the excess is split in proportion to the water from each
+      side.
+    - In that direction, the excess pays the floor deficit of each next node. The walk stops at
+      a closed node, an active node, a sink that is at its floor, the end of the column, or when
+      the excess is spent. The walk can go past the window of the solve.
+    - The water that the walk moves leaves the first sink. The rest stays in it. It is above the
+      floor, so it is mobile in the next sub-step.
+
+    The pass moves water between nodes, so it keeps the water exactly. It acts on the whole
+    column, not only on the window.
 
     The solve covers only the part of the column that can change. A sink or a closed node passes
     no water on in the sub-step. So the solve takes each group of active nodes (between sinks and
@@ -300,6 +314,27 @@ def capillary_implicit_step(lwc, floor, saturated, capacity, interface_terms, cl
     window = lwc_new[lo:hi]                                # a view: changes here change lwc_new
     window[:-1] -= flux
     window[1:] += flux
+
+    ### Water above the floor of a sink: it goes away from the nodes that gave it, and pays the floors of the sinks there
+    sink = ~closed & ~active
+    flux_all = np.zeros(len(lwc) - 1)
+    flux_all[lo:hi - 1] = flux
+    for i in np.flatnonzero(sink & (lwc_new > floor)):
+        excess = lwc_new[i] - floor[i]
+        from_above = max(flux_all[i - 1], 0.) if i > 0 else 0.
+        from_below = max(-flux_all[i], 0.) if i < len(lwc) - 1 else 0.
+        if from_above + from_below <= 0.:
+            continue
+        down = excess * from_above / (from_above + from_below)   # the share of the water that came from above
+        up = excess - down
+        for direction, remaining in ((1, down), (-1, up)):
+            j = i + direction
+            while remaining > 0. and 0 <= j < len(lwc) and sink[j] and lwc_new[j] < floor[j]:
+                put = min(remaining, floor[j] - lwc_new[j])
+                lwc_new[j] += put
+                lwc_new[i] -= put
+                remaining -= put
+                j += direction
 
     ### Tail of the diffusion in dry nodes of floor zero: set it back to zero in the node above
     dry = (lwc[lo:hi] <= 0.) & (floor[lo:hi] <= 0.) & ~closed[lo:hi]

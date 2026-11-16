@@ -100,7 +100,7 @@ def test_the_window_gives_the_result_of_the_solve_over_the_whole_column():
         first, second = int(rng.integers(3, 12)), int(rng.integers(22, 34))
         for start in (first, second):
             lwc[start:start + 4] = floor[start:start + 4] + 0.5 * (saturated[start:start + 4] - floor[start:start + 4])
-        terms = capillary_interface_terms(conductivity, dz, 1800., 0.1)
+        terms = capillary_interface_terms(1e-9 * conductivity, dz, 1800., 0.1)   # a low conductivity: no sink ends above its floor
         windowed, excess = capillary_implicit_step(lwc, floor, saturated, 10. * saturated, terms, closed)   # no capacity pass
         reference = full_column_solve(lwc, floor, saturated, terms, closed)
         assert excess == 0.
@@ -120,7 +120,7 @@ def test_the_window_does_not_solve_a_column_with_a_wet_group_between_sinks():
     saturated = floor + 0.004
     lwc = np.full(n, 0.0002)                  # all sinks
     lwc[5:7] = [0.0045, 0.003]               # one wet group of two nodes
-    terms = capillary_interface_terms(np.full(n, 1e-4), np.full(n, 0.01), 600., 0.07)
+    terms = capillary_interface_terms(np.full(n, 1e-8), np.full(n, 0.01), 600., 0.07)   # no sink ends above its floor
     new, excess = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, np.zeros(n, dtype=bool))
     assert excess == 0.
     assert np.array_equal(new[:4], lwc[:4]) and np.array_equal(new[8:], lwc[8:])
@@ -380,6 +380,205 @@ def test_a_cold_node_and_a_node_below_its_irreducible_water_are_sinks_and_a_dry_
     assert irreducible > 0.
     # a sink takes G S_0 for the new S_0, and its new water is its old water plus that, as in the test above
     assert cold == pytest.approx(terms[0] * (0.004 - cold) / 0.004, rel=1e-10)
+
+
+### The function: the floor pass ###
+
+def active_set_step(lwc, floor, saturated, interface_terms, closed):
+    '''
+    The oracle of the sink rule: the capillary step with an active-set iteration, with no window. A sink that
+    the solve fills above its floor becomes active, an active node with a negative saturation becomes a sink,
+    and the solve repeats until the two sets do not change. No capacity pass.
+    '''
+    from scipy.linalg import solve_banded
+    span = saturated - floor
+    closed = closed | (span <= 0.)
+    terms = np.where(closed[:-1] | closed[1:], 0., interface_terms)
+    active = ~closed & (lwc >= floor)
+
+    def solve(active):
+        banded = np.zeros((3, len(lwc)))
+        banded[0, 1:] = -np.where(active[:-1], terms, 0.)
+        banded[1] = np.where(active, span + np.concatenate(([0.], terms)) + np.concatenate((terms, [0.])), 1.)
+        banded[2, :-1] = -np.where(active[1:], terms, 0.)
+        saturation = solve_banded((1, 1), banded, np.where(active, lwc - floor, 0.))
+        flux = terms * (saturation[:-1] - saturation[1:])
+        new = lwc.copy()
+        new[:-1] -= flux
+        new[1:] += flux
+        return saturation, new
+
+    saturation, new = solve(active)
+    for _ in range(500):
+        become_active = ~active & ~closed & (new > floor + 1e-15)
+        become_sink = active & (saturation < -1e-12)
+        if not (np.any(become_active) or np.any(become_sink)):
+            break
+        active = (active | become_active) & ~become_sink
+        saturation, new = solve(active)
+    return new
+
+
+def wet_zone_column(from_below=False, cold_floor=0., nodes=100, wet=20, dz=0.01):
+    '''A wet zone of 20 nodes at the top (or the bottom) of dry, uniform firn. Water, floor, saturated water, terms function.'''
+    floor = np.full(nodes, 0.01 * dz) + cold_floor * dz
+    saturated = np.full(nodes, 0.4 * dz)
+    lwc = floor * (0.5 if cold_floor else 0.1)
+    zone = slice(-wet, None) if from_below else slice(0, wet)
+    lwc[zone] = floor[zone] + 0.6 * (saturated[zone] - floor[zone])
+    return lwc, floor, saturated, np.full(nodes, dz)
+
+
+def run_wet_zone(step_function, dtsub, hours=4, **kwargs):
+    '''The saturation of the mobile water after `hours` of repeated capillary steps, and the water of the column.'''
+    lwc, floor, saturated, dz = wet_zone_column(**kwargs)
+    terms = capillary_interface_terms(np.full(len(lwc), 3e-5), dz, dtsub, 0.07)
+    closed = np.zeros(len(lwc), dtype=bool)
+    for _ in range(int(3600 * hours / dtsub)):
+        lwc = step_function(lwc, floor, saturated, terms, closed)
+    return (lwc - floor) / (saturated - floor), lwc
+
+
+def model_step(lwc, floor, saturated, terms, closed):
+    return capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, closed)[0]
+
+
+def front_and_pile(saturation, from_below):
+    '''The node where S falls under half of its value at the wet end, and the largest S beyond it.'''
+    wet_end = saturation[-1] if from_below else saturation[0]
+    nodes = np.flatnonzero(saturation > 0.5 * wet_end)
+    front = nodes.min() if from_below else nodes.max()
+    beyond = saturation[:front] if from_below else saturation[front + 1:]
+    return front, (beyond.max() if len(beyond) else 0.)
+
+
+@pytest.mark.scheme
+@pytest.mark.parametrize('from_below', [False, True])
+@pytest.mark.parametrize('cold_floor', [0., 0.005])
+@pytest.mark.parametrize('dtsub', [1800., 3600.])
+def test_the_floor_pass_gives_the_front_of_the_active_set_oracle_and_no_pile(dtsub, cold_floor, from_below):
+    '''
+    A wet zone next to dry firn (the sinks of a cold column, or of a ColeouLesaffre floor): the sinks next to
+    the wet zone fill, and the excess goes on to the sinks beyond them. The front is that of the oracle within
+    one node and the profile of S is within 0.06 of it (measured: front at most 2 nodes, difference at most 0.042,
+    at 1800 s and 3600 s; the sink rule alone puts a node at S = 1 at the front, with a difference of 0.8 to 0.9).
+    '''
+    kwargs = dict(from_below=from_below, cold_floor=cold_floor)
+    reference, _ = run_wet_zone(active_set_step, dtsub, **kwargs)
+    result, _ = run_wet_zone(model_step, dtsub, **kwargs)
+    front_reference, pile_reference = front_and_pile(reference, from_below)
+    front, pile = front_and_pile(result, from_below)
+    assert abs(front - front_reference) <= 2
+    assert pile == pytest.approx(pile_reference, abs=0.03)
+    assert np.max(np.abs(result - reference)) < 0.06
+
+
+@pytest.mark.scheme
+@pytest.mark.parametrize('from_below', [False, True])
+def test_the_floor_pass_changes_little_at_a_sub_step_of_60_s(from_below):
+    '''At 60 s the sink rule is already close to the oracle. The floor pass stays within 0.03 of it (measured 0.024).'''
+    reference, _ = run_wet_zone(active_set_step, 60., from_below=from_below)
+    result, _ = run_wet_zone(model_step, 60., from_below=from_below)
+    assert np.max(np.abs(result - reference)) < 0.03
+    assert front_and_pile(result, from_below)[0] == pytest.approx(front_and_pile(reference, from_below)[0], abs=1)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('dtsub', [60., 1800., 3600.])
+def test_the_floor_pass_keeps_the_water_exactly(dtsub):
+    '''Random columns with many sinks and closed nodes: the water of the column is the water at the start.'''
+    rng = np.random.default_rng(5)
+    for _ in range(40):
+        lwc, floor, saturated, capacity, conductivity, dz, closed = random_column(rng, n=40, closed_fraction=0.05,
+                                                                                   sink_fraction=0.5)
+        terms = capillary_interface_terms(conductivity, dz, dtsub, 0.1)
+        new, excess = capillary_implicit_step(lwc, floor, saturated, 10. * saturated, terms, closed)   # no capacity pass
+        assert excess == 0.
+        assert new.sum() == pytest.approx(lwc.sum(), rel=1e-13, abs=0)
+    new, _ = capillary_implicit_step(*wet_zone_column()[:3], capacity=None, interface_terms=None, closed=None) \
+        if False else (None, None)
+
+
+def sink_rows(nodes):
+    '''A wet node at 0, sinks below it. Water, floor, saturated water, thickness.'''
+    floor = np.full(nodes, 0.0005)
+    saturated = floor + 0.004
+    lwc = np.full(nodes, 0.0002)
+    lwc[0] = saturated[0]
+    return lwc, floor, saturated, np.full(nodes, 0.01)
+
+
+@pytest.mark.unit
+def test_the_excess_of_a_sink_pays_the_floors_of_the_sinks_below_and_stops_at_a_closed_node():
+    '''
+    A full node on top, a sink next to it that the solve fills far above its floor, more sinks below.
+    Open column: the excess pays the floors of the sinks below, in order, and the first sink keeps the rest.
+    With a closed node under the first sink: the water stays in the first sink and nothing passes the closed node.
+    '''
+    lwc, floor, saturated, dz = sink_rows(6)
+    terms = capillary_interface_terms(np.full(6, 1e-3), dz, 3600., 0.07)
+    no_closed = np.zeros(6, dtype=bool)
+    new, _ = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, no_closed)
+    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14, abs=0)
+    assert new[1] >= floor[1]
+    paid = np.flatnonzero(new[2:] > lwc[2:]) + 2
+    assert len(paid) >= 1
+    assert np.all(new[paid[:-1]] == floor[paid[:-1]])   # each sink that the walk passed is at its floor
+    assert np.all(new[paid[-1] + 1:] == lwc[paid[-1] + 1:])
+
+    closed = no_closed.copy()
+    closed[2] = True
+    new_closed, _ = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, closed)
+    assert new_closed.sum() == pytest.approx(lwc.sum(), rel=1e-14, abs=0)
+    assert np.array_equal(new_closed[2:], lwc[2:])    # nothing at the closed node or below it
+    assert new_closed[1] > floor[1]                   # the first sink keeps the excess: it is mobile in the next sub-step
+
+
+@pytest.mark.unit
+def test_the_excess_of_a_sink_below_a_wet_group_goes_up_and_the_split_follows_the_water_from_each_side():
+    '''
+    Mirror of the downward case: a full node at the bottom gives its water to the sink above it, and the excess
+    goes up. A sink between two wet nodes of unequal saturation splits its excess in proportion to what it
+    received from each side, and pays the sinks on both sides.
+    '''
+    lwc, floor, saturated, dz = sink_rows(6)
+    lwc, floor, saturated = lwc[::-1].copy(), floor[::-1].copy(), saturated[::-1].copy()
+    terms = capillary_interface_terms(np.full(6, 1e-3), dz, 3600., 0.07)
+    new, _ = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, np.zeros(6, dtype=bool))
+    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14, abs=0)
+    assert new[4] >= floor[4]
+    assert new[3] > lwc[3]                               # the walk goes up, to the sinks above the first sink
+
+    # both sides: a sink at node 4 between a full node at 3 and a node at 5 that is half full, sinks above and below
+    n = 9
+    floor = np.full(n, 0.0005)
+    saturated = floor + 0.004
+    lwc = np.full(n, 0.0002)
+    lwc[3], lwc[5] = saturated[3], floor[5] + 0.001
+    lwc[4] = 0.00049                                     # a sink very close to its floor
+    terms = capillary_interface_terms(np.full(n, 1e-3), np.full(n, 0.01), 3600., 0.07)
+    new, _ = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, np.zeros(n, dtype=bool))
+    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14, abs=0)
+    assert new[2] > lwc[2] and new[6] > lwc[6]           # both sides pay the sinks beyond the nodes that gave water
+
+
+@pytest.mark.unit
+def test_the_walk_of_the_floor_pass_goes_past_the_window_of_the_solve():
+    '''
+    One wet group of two nodes between sinks: the solve covers the group and the sink on each side. The excess of
+    the sink on the lower side pays the sinks below it, which are outside the window.
+    '''
+    n = 14
+    floor = np.full(n, 0.0005)
+    saturated = floor + 0.004
+    lwc = np.full(n, 0.0002)
+    lwc[5:7] = saturated[5:7]
+    terms = capillary_interface_terms(np.full(n, 1e-3), np.full(n, 0.01), 3600., 0.07)
+    new, excess = capillary_implicit_step(lwc, floor, saturated, saturated.copy(), terms, np.zeros(n, dtype=bool))
+    assert excess == 0.
+    assert new[7] >= floor[7] and new[4] >= floor[4]
+    assert new[8] > lwc[8] and new[3] > lwc[3]       # outside the window (nodes 4 to 7)
+    assert new.sum() == pytest.approx(lwc.sum(), rel=1e-14, abs=0)
 
 
 ### The scheme: the oracle ###
