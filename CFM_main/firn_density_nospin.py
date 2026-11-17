@@ -36,6 +36,7 @@ import psutil
 import shutil
 import time
 import inspect
+import step_timing
 import h5py
 import scipy.interpolate as interpolate
 from firn_air import FirnAir
@@ -1162,6 +1163,11 @@ class FirnDensityNoSpin:
 
         Evolve the spatial grid, time grid, accumulation rate, age, density, mass, stress, temperature, and diffusivity through time
         based on the user specified number of timesteps in the model run. Updates the firn density using a user specified 
+
+        With the key step_timing true, the time of each step goes to step_timing.csv in resultsFolder, one line for each model
+        year is printed, and the dictionary self.step_timing_stages holds the wall and CPU time at the start and the end of the loop
+        (keys 'loop_start', 'switch', 'loop_end', 'write_end'; each value is {'wall', 'cpu'}, and 'switch' is None if no step
+        reaches bucket_until_year). The hooks only read the model state, so the results do not change. See step_timing.py.
         
         '''
         self.steps = 1 / np.mean(self.t) # steps per year
@@ -1207,7 +1213,10 @@ class FirnDensityNoSpin:
         print('modeltime',self.modeltime[0],self.modeltime[-1])
         mainrun_ind = np.where(self.modeltime>=self.forcing_data_start)[0][0]
 
+        timing = step_timing.StepTimer(self, S_PER_YEAR*RHO_I_MGM) if self.c.get('step_timing', False) else None
+
         for iii in range(self.stp):
+            if timing: timing.begin(iii)
             mtime = self.modeltime[iii]
             zbot_old = self.z[-1]
             self.dh_melt = 0.0   # reset; only bucket() sets it
@@ -1397,6 +1406,7 @@ class FirnDensityNoSpin:
                     self.forcing_dict['SMELT'][self.start_ind+iii] = self.snowmelt[iii]
             ######################
 
+            if timing: timing.mark('pre')
             ######################
             ### MELT #############
             if self.MELT:
@@ -1528,6 +1538,7 @@ class FirnDensityNoSpin:
                 self.dh_melt = 0
             ### end MELT #########
             ######################
+            if timing: timing.mark('melt')
             
             ### Firn Air ###############
             if self.c['FirnAir']: # Update firn air
@@ -1677,6 +1688,7 @@ class FirnDensityNoSpin:
 
             ### All temperature work happens at the end of the time loop
 
+            if timing: timing.mark('mid')
             Ts_old = self.Tz[0]
             if self.c['manualT']: # manual temperature measurements are fed into CFM
                 tif = interpolate.interp1d(self.manualT_dep, self.manualT_temp[:,iii],kind='cubic')
@@ -1729,6 +1741,7 @@ class FirnDensityNoSpin:
                 self.refrozen = self.refrozen + (LWC_pre_en - self.LWC) # per layer [m we], sums to en_refreeze
                 
 
+            if timing: timing.mark('heat')
             self.T50     = np.mean(self.Tz[self.z<50]) # Temperature at 50 
             
             self.rho[self.rho>RHO_I] = RHO_I
@@ -1815,7 +1828,10 @@ class FirnDensityNoSpin:
                 # Lfluxout = self.refreeze + self.runoff + np.sum(lwc_endofloop) + self.subLWCvol
                 # LFdiff = Lfluxin - Lfluxout
                 # LFdiffsum = LFdiffsum + LFdiff
-        
+
+            if timing: timing.end_step(iii)
+
+        if timing: timing.finish()
         if self.write_diag:
             solver._diag_write(os.path.join(self.c['resultsFolder'], f'diagnostics_{self.c["meltwater_solver"]}.csv'))
         # print(f'iteration count: {self.total_count}')
@@ -1860,6 +1876,7 @@ class FirnDensityNoSpin:
                 print('-> set manual_iceout/iceout, or add runoff_rate_ie*t to each dH in post-processing')
 
         write_nospin_hdf5(self,self.MOutputs.Mout_dict,self.forcing_dict)
+        if timing: timing.mark_write_end()
 
     ###########################
     ##### END time_evolve #####

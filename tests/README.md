@@ -71,6 +71,14 @@ Both front functions take the cold degrees of the firn ahead of the front. They 
 - In a model run, the snapshot is NaN in each step where `darcyscheme` does not run. The test counts the calls with a wrapper of `darcyscheme` in `firn_density_nospin`.
 - Gridded output uses the depth of the snapshot, not the end-of-step depth.
 
+`test_step_timing.py` checks the key `step_timing` (`step_timing.py`).
+
+- A short run with the implicit flow step and `bucket_until_year` in the run gives the same datasets, bit for bit, with the key on and off. With the key off the model has no `step_timing_stages` and there is no `step_timing.csv`.
+- `step_timing.csv` has one row for each step. The five parts add up to the step (wall and CPU time) within 1e-9 s. The counts of the schemes `darcy` and `bucket` equal the calls that a wrapper of the two functions counts. `substeps`, `root_solves` and `idle_substeps` are empty where the scheme does not give them.
+- The run prints one line for each model year, and the wall time of the line equals the sum of its rows. `step_timing_stages` has the four stages in order, and `switch` is `None` when no step reaches `bucket_until_year`.
+- `idle_substeps` (a count in `darcyscheme`, implicit step only) equals `substeps` on a dry column with no input, is 0 on a column with melt, and is absent with the explicit step. The test imports `edge_column` from `test_darcy_implicit.py`.
+- `step_timing: "yes"` stops the run in the validation.
+
 ## Compare two commits
 
 `compare_commits.py` checks that two commits give the same model results. Run it by hand before you close a change that must keep the results. Put the result in the PR description. Commit your work first, because the script reads commits only.
