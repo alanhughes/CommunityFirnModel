@@ -116,3 +116,20 @@ def test_validation_needs_a_boolean():
     config = {'step_timing': 'yes'}
     with pytest.raises(ConfigValidationError, match="'step_timing' should be true or false"):
         validate_config(dict(config))
+
+
+@pytest.mark.conservation
+def test_stages_are_filled_as_the_run_goes(short_config, monkeypatch):
+    # A run that stops inside the loop keeps loop_start and switch, as plain finite floats.
+    def failing_darcyscheme(model, iii):
+        raise RuntimeError('stop')
+    monkeypatch.setattr(firn_density_nospin, 'darcyscheme', failing_darcyscheme)
+    run = short_config(years=2, step_timing=True, **IMPLICIT)
+    model = run.build()
+    with pytest.raises(RuntimeError):
+        model.time_evolve()
+    stages = model.step_timing_stages
+    assert stages['loop_end'] is None and stages['write_end'] is None
+    for name in ('loop_start', 'switch'):
+        assert set(stages[name]) == {'wall', 'cpu'}
+        assert all(type(value) is float and np.isfinite(value) for value in stages[name].values())
