@@ -1817,7 +1817,7 @@ class FirnDensityNoSpin:
                 # LFdiffsum = LFdiffsum + LFdiff
         
         if self.write_diag:
-            solver._diag_write(f'diagnostics_{self.c["meltwater_solver"]}.csv')
+            solver._diag_write(os.path.join(self.c['resultsFolder'], f'diagnostics_{self.c["meltwater_solver"]}.csv'))
         # print(f'iteration count: {self.total_count}')
         ##################################
         ##### END TIME-STEPPING LOOP #####
