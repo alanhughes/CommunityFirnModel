@@ -19,6 +19,8 @@ With the key on, a run gives:
   main run. The spin-up removes resultsFolder only if it holds nothing but
   .json and .hdf5 files, so an old file can stay until then.
 - One line for each model year on the standard output, with its own timestamp.
+  The line says "(part year)" when the year has fewer steps than a full year,
+  for example the first or the last year of a run that starts or ends in the year.
 - The dictionary firn.step_timing_stages on the model instance, for a program
   that runs the model (see STAGES).
 
@@ -127,10 +129,11 @@ class StepTimer:
         self.year = None
         self.rows = []
         self.year_totals = None
-        self.first_year_part = False
         self.n_steps = len(model.modeltime)
         self.bucket_until_year = getattr(model, 'bucket_until_year', None)
-        self.step_years = (model.modeltime[1] - model.modeltime[0]) if self.n_steps > 1 else 0.
+        # The mean step length. A monthly step varies from 28 to 31 days, so one step is not enough.
+        self.step_years = ((model.modeltime[-1] - model.modeltime[0]) / (self.n_steps - 1)
+                           if self.n_steps > 1 else 0.)
         self.parts_wall = {}
         self.parts_cpu = {}
         self.extra = {}
@@ -144,10 +147,10 @@ class StepTimer:
         modeltime = self.model.modeltime[iii]
         year = int(np.floor(modeltime))
         if self.year is None:
-            self._start_year(year, modeltime)
+            self._start_year(year)
         elif year != self.year:
-            self._write_year(part_year=self.first_year_part)
-            self._start_year(year, modeltime)
+            self._write_year()
+            self._start_year(year)
         if self.stages['switch'] is None and self.bucket_until_year is not None \
                 and modeltime >= self.bucket_until_year:
             self.stages['switch'] = _now()
@@ -221,9 +224,7 @@ class StepTimer:
     def finish(self):
         '''Write the last model year and close the file.'''
         if self.year is not None:
-            last = self.model.modeltime[self.n_steps - 1]
-            part_year = last + self.step_years < self.year + 1 - 0.5 * self.step_years
-            self._write_year(part_year=part_year or self.first_year_part)
+            self._write_year()
         self.file.close()
         self.stages['loop_end'] = _now()
 
@@ -233,21 +234,30 @@ class StepTimer:
 
     ### Private ###
 
-    def _start_year(self, year, modeltime):
-        if self.year is None:
-            self.first_year_part = (modeltime - year) > 0.5 * self.step_years
-        else:
-            self.first_year_part = False
+    def _start_year(self, year):
         self.year = year
         self.rows = []
         self.year_totals = {'steps': 0, 'wall': 0., 'cpu': 0., 'wall_melt': 0., 'wall_heat': 0.,
                             'schemes': {}, 'substeps': 0, 'root_solves': 0, 'melt_mwe': 0.}
 
-    def _write_year(self, part_year):
+    def _part_year(self):
+        '''
+        True if the model year has fewer steps than a full year. The rule uses the number of steps, not the
+        model time of the first step, because the forcing dates can be at the start or at the end of a step
+        (for example monthly forcing on the last day of each month). A full year has about 1/step_years steps
+        (12 monthly, 365 or 366 daily). The margin of 1 % allows for a leap year and for months of different
+        lengths. So a monthly year with 11 steps is a part year, but a daily year with 364 steps is not.
+        '''
+        if self.step_years <= 0.:
+            return False
+        return self.year_totals['steps'] < 0.99 / self.step_years
+
+    def _write_year(self):
         '''Write the rows of the model year to the file, flush it, and print the line of the year.'''
         self.writer.writerows(self.rows)
         self.file.flush()
         t = self.year_totals
+        part_year = self._part_year()
         counts = ', '.join(f'{name} {t["schemes"].get(name, 0)}' for name in ('darcy', 'bucket', 'dry', 'nomelt')
                            if t['schemes'].get(name, 0) > 0 or name in ('darcy', 'bucket', 'dry'))
         stamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')

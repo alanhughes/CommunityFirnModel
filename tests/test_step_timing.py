@@ -4,6 +4,7 @@ step, with the parts that add up to the step and the counts of the melt schemes.
 '''
 
 import csv
+from types import SimpleNamespace
 
 import h5py
 import numpy as np
@@ -11,6 +12,7 @@ import pytest
 
 import firn_density_nospin
 import melt
+import step_timing
 from config_validation import ConfigValidationError, validate_config
 from test_darcy_implicit import edge_column
 
@@ -84,6 +86,8 @@ def test_key_on_gives_the_same_results_and_the_rows(short_config, monkeypatch, c
         wall = float(line.split('wall ')[1].split(' s')[0])
         year_rows = [row for row in rows if int(float(row['modeltime'])) == year]
         assert abs(wall - sum(float(row['wall_s']) for row in year_rows)) < 0.006   # the line has two decimals
+    # the monthly forcing has dates at the end of each month, and the two years of the run are full years
+    assert not any('(part year)' in line for line in lines)
 
     # the stages for the program that runs the model
     stages = on_model.step_timing_stages
@@ -135,3 +139,24 @@ def test_stages_are_filled_as_the_run_goes(short_config, monkeypatch):
     for name in ('loop_start', 'switch'):
         assert set(stages[name]) == {'wall', 'cpu'}
         assert all(type(value) is float and np.isfinite(value) for value in stages[name].values())
+
+
+@pytest.mark.unit
+def test_part_year_label_comes_from_the_number_of_steps(tmp_path, capsys):
+    # Monthly steps at the end of each month: 1980 is full, the run stops after June 1981.
+    month_ends = np.cumsum([31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31, 31, 28, 31, 30, 31, 30])
+    modeltime = np.where(month_ends < 366, 1980. + month_ends / 366., 1981. + (month_ends - 366) / 365.)
+    modeltime[11] = 1980.9999999    # 31 December 1980 stays in 1980
+    model = SimpleNamespace(c={'resultsFolder': str(tmp_path)}, modeltime=modeltime, MELT=False,
+                            dz=np.ones(5), LWC=np.zeros(5))
+    timer = step_timing.StepTimer(model, 1.)
+    for iii in range(len(modeltime)):
+        timer.begin(iii)
+        for part in PARTS[:-1]:
+            timer.mark(part)
+        timer.end_step(iii)
+    timer.finish()
+    lines = [line for line in capsys.readouterr().out.splitlines() if ' step_timing year ' in line]
+    assert len(lines) == 2
+    assert 'year 1980:' in lines[0] and 'steps 12 ' in lines[0]
+    assert 'year 1981 (part year):' in lines[1] and 'steps 6 ' in lines[1]

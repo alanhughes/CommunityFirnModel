@@ -75,8 +75,9 @@ Both front functions take the cold degrees of the firn ahead of the front. They 
 
 - A short run with the implicit flow step and `bucket_until_year` in the run gives the same datasets, bit for bit, with the key on and off. With the key off the model has no `step_timing_stages` and there is no `step_timing.csv`.
 - `step_timing.csv` has one row for each step. The five parts add up to the step (wall and CPU time) within 1e-9 s. The counts of the schemes `darcy` and `bucket` equal the calls that a wrapper of the two functions counts. `substeps`, `root_solves` and `idle_substeps` are empty where the scheme does not give them. Each `darcy` and `bucket` row has a `budget_residual`.
-- The run prints one line for each model year, and the wall time of the line equals the sum of its rows. `step_timing_stages` has the four stages in order, and `switch` is `None` when no step reaches `bucket_until_year`.
+- The run prints one line for each model year, and the wall time of the line equals the sum of its rows. With the monthly forcing (dates at the end of each month), no line of the two full years says "(part year)". `step_timing_stages` has the four stages in order, and `switch` is `None` when no step reaches `bucket_until_year`.
 - `idle_substeps` (a count in `darcyscheme`, implicit step only) equals `substeps` on a dry column with no input, is 0 on a column with melt, and is absent with the explicit step. The test imports `edge_column` from `test_darcy_implicit.py`.
+- The label "(part year)" comes from the number of steps: a `StepTimer` on a stub model with monthly steps at the end of each month marks a full year of 12 steps as full and a last year of 6 steps as part.
 - `step_timing: "yes"` stops the run in the validation.
 
 ## Compare two commits
