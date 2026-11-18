@@ -1166,8 +1166,11 @@ class FirnDensityNoSpin:
 
         With the key step_timing true, the time of each step goes to step_timing.csv in resultsFolder, one line for each model
         year is printed, and the dictionary self.step_timing_stages holds the wall and CPU time at the start and the end of the loop
-        (keys 'loop_start', 'switch', 'loop_end', 'write_end'; each value is {'wall', 'cpu'}, and 'switch' is None if no step
-        reaches bucket_until_year). The hooks only read the model state, so the results do not change. See step_timing.py.
+        (keys 'loop_start', 'switch', 'loop_end', 'write_end'; each value is {'wall', 'cpu'}). 'switch' is the first step at or
+        after bucket_until_year, for every liquid scheme: the boundary between the spin-up part and the model-run part of the
+        transient run. It is a change of the melt scheme only for darcy, prefsnowpack and resingledomain. 'switch' is None if
+        MELT is off or if no step reaches bucket_until_year. The hooks only read the model state, so the results do not
+        change. See step_timing.py.
         
         '''
         self.steps = 1 / np.mean(self.t) # steps per year

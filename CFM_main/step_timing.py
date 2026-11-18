@@ -24,6 +24,21 @@ With the key on, a run gives:
 - The dictionary firn.step_timing_stages on the model instance, for a program
   that runs the model (see STAGES).
 
+The stages (each the wall and CPU time {'wall', 'cpu'} at that point, or None):
+
+- loop_start: the start of the time loop.
+- switch: the start of the first step at or after bucket_until_year. This is the
+  same for every liquid scheme. It splits the transient run into the spin-up
+  part (before bucket_until_year, default 1980) and the model-run part. It is
+  a change of the melt scheme (bucket before, the liquid scheme after) only for
+  darcy, prefsnowpack and resingledomain. For bucket it is only the boundary
+  between the two parts. The cases: None if MELT is off (the model has no
+  bucket_until_year); the first step if bucket_until_year is null (the model
+  sets -inf) or before the start of the run; None if the run ends before
+  bucket_until_year.
+- loop_end: the end of the time loop, after the last csv rows are written.
+- write_end: after the results file is written.
+
 The time step is split into five parts. A mark gives the end of a part:
 
 - pre:  merging, densification, strain, surface energy balance, the melt factor of bare ice.
@@ -69,6 +84,7 @@ CSV_NAME = 'step_timing.csv'
 
 PARTS = ('pre', 'melt', 'mid', 'heat', 'post')
 
+# 'switch' is the first step at or after bucket_until_year for every scheme, not only a change of scheme. See the module docstring.
 STAGES = ('loop_start', 'switch', 'loop_end', 'write_end')
 
 DIAGNOSTIC_COLUMNS = (

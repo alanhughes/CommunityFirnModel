@@ -176,3 +176,21 @@ def test_part_year_label_comes_from_the_number_of_steps(tmp_path, capsys):
     assert len(lines) == 2
     assert 'year 1980:' in lines[0] and 'steps 12 ' in lines[0]
     assert 'year 1981 (part year):' in lines[1] and 'steps 6 ' in lines[1]
+
+
+@pytest.mark.conservation
+def test_switch_is_set_for_bucket_at_the_first_step_of_bucket_until_year(short_config, monkeypatch):
+    # For bucket no scheme changes, but switch still marks the boundary at bucket_until_year.
+    switch_steps = []
+    original_begin = step_timing.StepTimer.begin
+
+    def begin(timer, iii):
+        before = timer.stages['switch']
+        original_begin(timer, iii)
+        if before is None and timer.stages['switch'] is not None:
+            switch_steps.append(iii)
+    monkeypatch.setattr(step_timing.StepTimer, 'begin', begin)
+    run = short_config(years=2, liquid='bucket', bucket_until_year=1981, step_timing=True)
+    model = run.run()
+    first = int(np.argmax(model.modeltime >= 1981))
+    assert first > 0 and switch_steps == [first]

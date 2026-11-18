@@ -78,6 +78,7 @@ Both front functions take the cold degrees of the firn ahead of the front. They 
 - The run prints one line for each model year, and the wall time of the line equals the sum of its rows. With the monthly forcing (dates at the end of each month), no line of the two full years says "(part year)". `step_timing_stages` has the four stages in order, and `switch` is `None` when no step reaches `bucket_until_year`.
 - `idle_substeps` (a count in `darcyscheme`, implicit step only) equals `substeps` on a dry column with no input, is 0 on a column with melt, and is absent with the explicit step. The test imports `edge_column` from `test_darcy_implicit.py`.
 - A run that stops inside the loop (a `darcyscheme` that raises) keeps `loop_start` and `switch` as plain finite floats, and `loop_end` and `write_end` stay `None`. `step_timing.csv` keeps the rows of each full year before the stop.
+- With `liquid: bucket`, `switch` is set at the first step at or after `bucket_until_year`, although no scheme changes there.
 - With `MELT: false` each row has the scheme `nomelt` and an empty `melt_mwe`, and `switch` is `None`.
 - The label "(part year)" comes from the number of steps: a `StepTimer` on a stub model with monthly steps at the end of each month marks a full year of 12 steps as full and a last year of 6 steps as part.
 - `step_timing: "yes"` stops the run in the validation.
