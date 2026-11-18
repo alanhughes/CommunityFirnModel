@@ -46,12 +46,12 @@ def test_key_on_gives_the_same_results_and_the_rows(short_config, monkeypatch, c
     on_run, on_model, on, calls = _run(short_config, monkeypatch, step_timing=True, **IMPLICIT)
     printed = capsys.readouterr().out
 
-    # A2: the same datasets, bit for bit
+    # the same datasets, bit for bit
     assert off.keys() == on.keys()
     for name in off:
         assert np.array_equal(off[name], on[name], equal_nan=True), name
 
-    # A3: one row for each step, the parts add up to the step, the schemes and the sub-steps agree
+    # one row for each step, the parts add up to the step, the schemes and the sub-steps agree
     with open(on_run.folder / 'step_timing.csv', newline='') as f:
         rows = list(csv.DictReader(f))
     assert len(rows) == on_model.stp
@@ -78,7 +78,7 @@ def test_key_on_gives_the_same_results_and_the_rows(short_config, monkeypatch, c
             assert row['substeps'] == ''
     assert sum(int(row['substeps']) for row in rows if row['scheme'] == 'darcy') > 0
 
-    # A4: one line for each model year, and the wall time of a year is the sum of its rows
+    # one line for each model year, and the wall time of a year is the sum of its rows
     lines = [line for line in printed.splitlines() if ' step_timing year ' in line]
     assert len(lines) == len({int(float(row['modeltime'])) for row in rows})
     for line in lines:
