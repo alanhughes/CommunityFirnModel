@@ -83,6 +83,13 @@ Both front functions take the cold degrees of the firn ahead of the front. They 
 - The label "(part year)" comes from the number of steps: a `StepTimer` on a stub model with monthly steps at the end of each month marks a full year of 12 steps as full and a last year of 6 steps as part.
 - `step_timing: "yes"` stops the run in the validation.
 
+`test_heat_substep.py` checks the argument `dt` of `heatDiff` and `refreezeDiff` (`diffusion.py`).
+
+- `dt=None` gives the same arrays, bit for bit, as `dt=self.dt[iii]`. The test covers `heatDiff` and `refreezeDiff` with `transient_solve_enthalpy`.
+- On a dry column, one step of 86400 s and two steps of 43200 s differ by less than 0.01 K.
+- On a wet column, 48 steps of 1800 s with each of the four solvers keep the total mass to 1e-9 kg/m², keep `Tz` at or below 273.15 K and keep `LWC` at or above zero.
+- On the same wet column, the column liquid water of 48 steps of 1800 s with `transient_solve_enthalpy` is within 0.2 kg/m² of one step of 86400 s.
+
 ## Compare two commits
 
 `compare_commits.py` checks that two commits give the same model results. Run it by hand before you close a change that must keep the results. Put the result in the PR description. Commit your work first, because the script reads commits only.
