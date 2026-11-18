@@ -1422,6 +1422,7 @@ def darcyscheme(self,iii):
         print(f'capillary_implicit_darcy is "{capillary_law}" with flow_step_darcy "explicit". '
               'The key has no effect with the explicit flow step.')
     n_substeps  = 0   # number of sub-steps in this call
+    idle_substeps = 0   # number of sub-steps of the implicit flow step with no liquid input and no node above its irreducible water
     root_solves = 0   # number of root solves of the implicit flow step
     snapshot_at = None   # time in the step at which the snapshot outputs are taken [s]; None: no snapshot
     if getattr(self, 'darcy_snapshot', False):
@@ -1547,6 +1548,8 @@ def darcyscheme(self,iii):
         LWC_i = theta_i * self.dz                    # recompute LWC_i after the theta_s-based clamp above
 
         LWCav = np.maximum(0, self.LWC - LWC_i)      # LWC available for water flow
+        if implicit_flow and liq_input == 0. and not np.any(self.LWC > LWC_i):
+            idle_substeps += 1   # the count only reads the state
         LWCacm = self.dz * theta_s - self.LWC        # extra LWC that can be accommodated in each layer
         LWCacm[imp] = 0.                             # no water storage in impermeable ice lenses
 
@@ -1840,6 +1843,7 @@ def darcyscheme(self,iii):
     self.melt_diagnostics['substeps'] = n_substeps
     if implicit_flow:
         self.melt_diagnostics['root_solves'] = root_solves
+        self.melt_diagnostics['idle_substeps'] = idle_substeps
     _record_check(self, 'budget', abs(water_balance_residual) <= 1e-12, residual=water_balance_residual, threshold=1e-12)
 
     if np.any(self.Tz > T_MELT):

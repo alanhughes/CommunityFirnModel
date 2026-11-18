@@ -15,7 +15,6 @@ temporary workaround, this module puts CFM_main/ on sys.path so that they import
 
 import json
 import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -178,8 +177,4 @@ class ShortRun:
         '''Build the model, run time_evolve(), and return the model.'''
         model = self.build()
         model.time_evolve()
-        # time_evolve writes the solver diagnostics to the working folder.
-        diagnostics_file = Path(f'diagnostics_{self.config["meltwater_solver"]}.csv')
-        if diagnostics_file.exists():
-            shutil.move(diagnostics_file, self.folder / diagnostics_file.name)
         return model

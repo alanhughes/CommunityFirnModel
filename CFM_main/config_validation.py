@@ -99,6 +99,9 @@ ALLOWED_VALUES = {
     'capillary_implicit_darcy': {'none', 'power_law'},
 }
 
+# Optional keys that must be a boolean.
+BOOLEAN_KEYS = ('step_timing',)
+
 # Keys that hold lists whose elements are validated against ALLOWED_VALUES.
 LIST_VALUED_KEYS = {'outputs', 'iso'}
 
@@ -164,7 +167,7 @@ KNOWN_KEYS = {
     'liquid', 'merging', 'merge_min', 'LWCcorrect', 'ColeouLesaffre',
     'IrrVal', 'RhoImp', 'ThickImp', 'LeakyLenses', 'LensDecayLength', 'DownToIce', 'Ponding', 'DirectRunoff',
     'RunoffZuoOerlemans', 'Slope', 'melt_strict', 'keep_firnthickness', 'meltwater_solver', 'meltwater_solver_options',
-    'bucket_until_year',
+    'bucket_until_year', 'step_timing',
     'debug_bucket', 'IceMeltFactor', 'IceMeltRho',
     # darcy
     'dtmin_darcy', 'dtmax_darcy', 'dtsub_darcy', 'RhoImp_darcy', 'ThickImp_darcy',
@@ -277,6 +280,11 @@ def validate_config(c, config_path=None):
                 errors.append(
                     "invalid value {!r} for '{}'; allowed values are: {}"
                     .format(value, key, allowed_str))
+
+    # 3b. Optional boolean keys.
+    for key in BOOLEAN_KEYS:
+        if key in c and not isinstance(c[key], bool):
+            errors.append("key '{}' should be true or false; got {!r}".format(key, c[key]))
 
     # 5. Deprecated and unknown keys -> warnings only.
     # claude, 26/09/11: deprecated keys are checked first so they are not
