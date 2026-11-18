@@ -70,6 +70,8 @@ def test_key_on_gives_the_same_results_and_the_rows(short_config, monkeypatch, c
             assert 0 <= int(row['idle_substeps']) <= int(row['substeps'])
         else:
             assert row['root_solves'] == '' and row['idle_substeps'] == ''
+        if row['scheme'] in ('darcy', 'bucket'):
+            assert row['budget_residual'] != ''
         if row['scheme'] == 'bucket':
             assert row['substeps'] == ''
     assert sum(int(row['substeps']) for row in rows if row['scheme'] == 'darcy') > 0

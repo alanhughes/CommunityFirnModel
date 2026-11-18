@@ -48,7 +48,8 @@ The columns of a row:
 - substeps, root_solves, water_in_mwe, lwc_end_mwe, refrozen_mwe, runoff_mwe,
   budget_residual, n_wet_cold_layers, idle_substeps: from model.melt_diagnostics.
   Empty when the scheme does not give the value (root_solves and idle_substeps:
-  the implicit flow step only; substeps: darcy only).
+  the implicit flow step only; substeps: darcy only). For bucket, budget_residual
+  and n_wet_cold_layers come from its second checks (budget_2, cold_2).
 
 The small work of a mark (the counts of the nodes, the read of the melt) falls in the
 part that follows the mark. The time of the csv rows is in no part: it is the
@@ -182,7 +183,7 @@ class StepTimer:
             checks = diagnostics.get('checks', {})
             cold = checks.get('cold', checks.get('cold_2', {}))
             values = [diagnostics.get(key) for _, key in DIAGNOSTIC_COLUMNS]
-            residual = checks.get('budget', {}).get('residual')
+            residual = checks.get('budget', checks.get('budget_2', {})).get('residual')
             cold_layers = cold.get('n_wet_cold_layers')
             idle = diagnostics.get('idle_substeps')
         else:
