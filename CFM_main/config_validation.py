@@ -97,6 +97,7 @@ ALLOWED_VALUES = {
     'krel_darcy': {'vanGenuchten', 'power_law'},
     'flow_step_darcy': {'explicit', 'implicit_gravity'},
     'capillary_implicit_darcy': {'none', 'power_law'},
+    'melt_split_darcy': {'uniform', 'burst'},
 }
 
 # Optional keys that must be a boolean.
@@ -176,6 +177,7 @@ KNOWN_KEYS = {
     'Ksat_darcy', 'Ksat_k0_darcy', 'viscosity_darcy', 'krel_darcy', 'krel_exponent_darcy',
     'snapshot_fraction_darcy', 'flow_step_darcy', 'dtsub_implicit_darcy',
     'capillary_implicit_darcy', 'capillary_pressure_darcy',
+    'melt_split_darcy', 'melt_peak_rate_darcy', 'melt_peak_hour_darcy',
     # SEB
     'SEB', 'SEB_TL_thick', 'albedo_factor',
     'SEB_turb_method', 'SEB_roughness_mode', 'SEB_z0m', 'SEB_z0h', 'SEB_z0q',
@@ -285,6 +287,20 @@ def validate_config(c, config_path=None):
     for key in BOOLEAN_KEYS:
         if key in c and not isinstance(c[key], bool):
             errors.append("key '{}' should be true or false; got {!r}".format(key, c[key]))
+
+    # 3c. Options of the melt split of the darcy scheme.
+    # The burst needs the implicit flow step. The check applies only when the darcy scheme runs.
+    if (c.get('MELT') and c.get('liquid') == 'darcy' and c.get('melt_split_darcy') == 'burst'
+            and c.get('flow_step_darcy', 'explicit') != 'implicit_gravity'):
+        errors.append("'melt_split_darcy' is 'burst', which needs 'flow_step_darcy' to be 'implicit_gravity'")
+    if 'melt_peak_rate_darcy' in c:
+        rate = c['melt_peak_rate_darcy']
+        if isinstance(rate, bool) or not isinstance(rate, (int, float)) or not rate > 0:
+            errors.append("key 'melt_peak_rate_darcy' should be a number above 0 (m/s of water); got {!r}".format(rate))
+    if 'melt_peak_hour_darcy' in c:
+        hour = c['melt_peak_hour_darcy']
+        if isinstance(hour, bool) or not isinstance(hour, (int, float)) or not 0 <= hour <= 24:
+            errors.append("key 'melt_peak_hour_darcy' should be a number from 0 to 24 (hours after the start of the step); got {!r}".format(hour))
 
     # 5. Deprecated and unknown keys -> warnings only.
     # claude, 26/09/11: deprecated keys are checked first so they are not
