@@ -987,11 +987,13 @@ _DARCY_DEFAULTS = {
     'krel_darcy': 'vanGenuchten', 'krel_exponent_darcy': 2.,
     'snapshot_fraction_darcy': 0.5, 'flow_step_darcy': 'explicit', 'dtsub_implicit_darcy': 1800.,
     'capillary_implicit_darcy': 'none', 'capillary_pressure_darcy': 700.,
-}  # the values the scheme used before these options were configurable (snapshot_fraction_darcy, flow_step_darcy, dtsub_implicit_darcy, capillary_implicit_darcy and capillary_pressure_darcy are new)
+    'melt_split_darcy': 'uniform', 'melt_peak_rate_darcy': 2.8e-7, 'melt_peak_hour_darcy': 12.,
+}  # the values the scheme used before these options were configurable (snapshot_fraction_darcy, flow_step_darcy, dtsub_implicit_darcy, capillary_implicit_darcy, capillary_pressure_darcy, melt_split_darcy, melt_peak_rate_darcy and melt_peak_hour_darcy are new)
 _KSAT_LAWS_DARCY = ('Calonne', 'power_law')        # values of Ksat_darcy
 _KREL_LAWS_DARCY = ('vanGenuchten', 'power_law')   # values of krel_darcy
 _FLOW_STEPS_DARCY = ('explicit', 'implicit_gravity')   # values of flow_step_darcy
 _CAPILLARY_LAWS_DARCY = ('none', 'power_law')          # values of capillary_implicit_darcy
+_MELT_SPLITS_DARCY = ('uniform', 'burst')              # values of melt_split_darcy
 _darcy_missing_reported = set()
 
 def _darcy_option(config, key):
@@ -1007,6 +1009,65 @@ def _darcy_option(config, key):
     return _DARCY_DEFAULTS[key]
 ### end _darcy_option ###
 #########################
+
+def _melt_schedule(melt_mass_tot, timetot, dtsub, peak_rate, peak_hour):
+    '''
+    Melt mass of each sub-step of the implicit flow step, for the option melt_split_darcy "burst".
+
+    The forcing gives the melt of a step, not when it falls. The rule is a burst at a fixed peak rate:
+    the duration is the melt divided by the peak rate. If the peak rate cannot deliver the melt within
+    the step, the burst fills the whole step at the mean rate, as the "uniform" option does, and no
+    melt is lost.
+
+    The burst lasts a whole number of sub-steps, n = ceil(duration / dtsub), and the sub-steps are not
+    cut at the end of the burst. The melt is shared between the n sub-steps in proportion to their
+    length, so the rate is the peak rate or a little below it, and the total is exactly the melt of
+    the step. The sub-step length and the number of sub-steps do not change. For example, 2.1 mm at
+    1 mm/h with sub-steps of 30 min needs 4.2 sub-steps, so it falls in 5 sub-steps at 0.84 mm/h.
+
+    The burst is centred on peak_hour, in hours after the start of the step. The forcing has one value
+    for each step, so the clock time of the start of the step is the only thing that is unknown, and
+    it depends on the forcing file. A burst that would cross the start or the end of the step is moved
+    to fit inside the step. It does not wrap round. The window is the nearest one to peak_hour
+    among the windows of n whole sub-steps that fit in the step.
+
+    Known limits: the rate is the peak rate of the radiation melt of an automatic weather station on
+    a day with melt (about 1 mm/h at the default). It leaves out the turbulent heat fluxes (foehn)
+    and the melt below the surface, which are part of the melt of a regional climate model. So a
+    day of such a model melts for longer at this rate, and more days reach the cap. It is not known
+    if real days are longer or more intense. Melt from foehn does not follow the afternoon pattern,
+    but this rule puts every burst at peak_hour. If the last sub-step is shorter than dtsub and it is
+    in the window, the window is a little shorter than n * dtsub, and the rate can be a little above the
+    peak rate. All the melt is at the surface, as in the other schemes.
+
+    :param melt_mass_tot: melt of the step [kg]
+    :param timetot: length of the step [s]
+    :param dtsub: fixed sub-step [s]. The last sub-step is shorter if it does not divide the step.
+    :param peak_rate: peak melt rate [m s-1 of water, so kg m-2 s-1 is peak_rate * RHO_W_KGM]
+    :param peak_hour: centre of the burst [h after the start of the step]
+    :return: the melt mass of each sub-step [kg], an array of ceil(timetot / dtsub) values, and the
+        burst window (start, end) in s after the start of the step. The window is None if there is no
+        melt. It is (0, timetot) if the burst fills the step.
+    '''
+    n_substeps = int(np.ceil(timetot / dtsub - 1e-9))
+    lengths    = np.full(n_substeps, float(dtsub))
+    lengths[-1] = timetot - (n_substeps - 1) * dtsub               # the last sub-step is shorter if dtsub does not divide timetot
+    if melt_mass_tot <= 0.:
+        return np.zeros(n_substeps), None
+    duration = melt_mass_tot / (peak_rate * RHO_W_KGM)             # time that the peak rate needs to give the melt [s]
+    if duration >= timetot:
+        return (melt_mass_tot / timetot) * lengths, (0., timetot)  # the peak rate cannot give the melt in the step: uniform rule
+    n_burst = min(int(np.ceil(duration / dtsub)), n_substeps)       # whole sub-steps of the burst
+    boundaries = np.concatenate(([0.], np.cumsum(lengths)))         # start of each sub-step, and the end of the step [s]
+    first_choices = np.arange(n_substeps - n_burst + 1)             # the windows that fit in the step: no wrapping
+    centres = 0.5 * (boundaries[first_choices] + boundaries[first_choices + n_burst])
+    first   = first_choices[np.argmin(np.abs(centres - peak_hour * 3600.))]   # the window nearest to the peak hour
+    window_lengths = lengths[first:first + n_burst]
+    schedule = np.zeros(n_substeps)
+    schedule[first:first + n_burst] = melt_mass_tot * window_lengths / np.sum(window_lengths)
+    return schedule, (boundaries[first], boundaries[first + n_burst])
+### end _melt_schedule ###
+##########################
 
 def _implicit_flow_step(self, liq_input, imptop, imp, ncv, rg, rhodcy, phi, phidcy, theta_s, LWC_i, cp_i, dtsub,
                         Ksat_law, Ksat_k0, viscosity, krel_law, krel_exponent, lat_runoff, slope_proxy,
@@ -1127,8 +1188,9 @@ def darcyscheme(self,iii):
 
     At each sub-step, in order:
       1. Surface nodes are melted (mass supplied at a constant rate,
-         meltflux_mass, over the sub-step), and the grid is regridded, similar
-         to the surface-melting logic in `bucket()`.
+         meltflux_mass, over the sub-step; with melt_split_darcy "burst", the
+         melt mass of the schedule of that sub-step), and the grid is regridded,
+         similar to the surface-melting logic in `bucket()`.
       2. Ice lenses are (re-)identified as impermeable barriers, only when the
          density profile has changed since the last sub-step (a caching
          optimization, since this scan is relatively expensive to repeat
@@ -1293,6 +1355,37 @@ def darcyscheme(self,iii):
           400 kg m-3), so the capillary flow is about 1700 times larger. The ratio goes with
           the square of the grain radius.
 
+    melt_split_darcy : str
+        How the melt of a step is spread over its sub-steps. "uniform" (default): the same melt in each
+        sub-step (the mean rate). "burst": the melt falls in a burst at a fixed peak rate, centred on
+        melt_peak_hour_darcy. "burst" needs flow_step_darcy "implicit_gravity". Reasons:
+        - The forcing gives the melt of a step, not its duration. At a site such as CI-0 the melt of
+          a day comes in a few hours, at about ten times the mean rate of the day. The rate decides
+          where the water perches.
+        - The duration is the melt divided by melt_peak_rate_darcy. If that is the whole step or
+          more, the burst fills the step at the mean rate, and no melt is lost.
+        - The burst is a whole number of sub-steps, n = ceil(duration / dtsub), and the rate is the
+          melt divided by the length of those sub-steps (the peak rate or a little below). The
+          sub-step is not cut, so the sub-step count does not change, and the melt of the step is exact.
+        - The explicit step has a thin-node error that a burst makes worse, so the explicit step
+          does not take "burst". The implicit step does not have this error.
+        - Rain stays uniform over the step.
+        See _melt_schedule for the rule and its limits. The window of the burst, in s after the start of
+        the step (None if there is no burst), is stored in self.melt_burst_window at each call.
+        With "uniform" the result is the same as without the key.
+
+    melt_peak_rate_darcy : float [m s-1 of water]
+        Peak melt rate of the burst, above 0. Default 2.8e-7 (1 mm/h). It is the median of the peak
+        hourly melt on days with melt, from the radiation-only melt of an automatic weather station at
+        CI-0 (2.6e-7), rounded. It is site data. It is read only with melt_split_darcy "burst".
+
+    melt_peak_hour_darcy : float [h]
+        Centre of the burst, in hours after the start of the step, from 0 to 24. Default 12. A burst that
+        would cross the start or the end of the step is moved to fit in it. The start of the step has
+        the clock time of the forcing file, so set the hour for the file. It is read only with
+        melt_split_darcy "burst". With heat conduction once for each step, the hour has no effect, only
+        the rate does.
+
     capillary_pressure_darcy : float [Pa]
         The coefficient c of p_c = c / S. Default 700 (gamma / d_p of Meyer and Hewitt, 2017).
         It is one value for the whole column. It is not linked to Ksat_k0_darcy: if you
@@ -1386,6 +1479,7 @@ def darcyscheme(self,iii):
     krel_exponent   = _darcy_option(self.c, 'krel_exponent_darcy')  # exponent of theta_e, power_law only
     flow_step       = _darcy_option(self.c, 'flow_step_darcy')      # 'explicit' (limiting flux) or 'implicit_gravity'
     capillary_law   = _darcy_option(self.c, 'capillary_implicit_darcy')  # 'none' or 'power_law', implicit step only
+    melt_split      = _darcy_option(self.c, 'melt_split_darcy')     # 'uniform' or 'burst' (implicit step only)
     ### END USER CHOICES ###
     if Ksat_law not in _KSAT_LAWS_DARCY:
         raise ValueError(f'Ksat_darcy is "{Ksat_law}". It must be one of {_KSAT_LAWS_DARCY}.')
@@ -1395,6 +1489,10 @@ def darcyscheme(self,iii):
         raise ValueError(f'flow_step_darcy is "{flow_step}". It must be one of {_FLOW_STEPS_DARCY}.')
     if capillary_law not in _CAPILLARY_LAWS_DARCY:
         raise ValueError(f'capillary_implicit_darcy is "{capillary_law}". It must be one of {_CAPILLARY_LAWS_DARCY}.')
+    if melt_split not in _MELT_SPLITS_DARCY:
+        raise ValueError(f'melt_split_darcy is "{melt_split}". It must be one of {_MELT_SPLITS_DARCY}.')
+    if melt_split == 'burst' and flow_step != 'implicit_gravity':
+        raise ValueError('melt_split_darcy "burst" needs flow_step_darcy "implicit_gravity".')
     implicit_flow = (flow_step == 'implicit_gravity')   # fixed sub-step, implicit gravity flow, no limiting flux
     capillary_head = None   # h_c = c / (rho_w g) of the capillary step [m]; None: no capillary step
     dtsub_fixed = dtsub               # sub-step of the implicit flow step [s]
@@ -1434,6 +1532,16 @@ def darcyscheme(self,iii):
     ### Surface fluxes ###
     melt_mass_tot = self.snowmeltSec[iii] * S_PER_YEAR * RHO_I       # total melt over the Darcy routine [kg]
     meltflux_mass = melt_mass_tot / timetot                          # melt flux throughout the Darcy routine [kg s-1]
+    burst_schedule = None                                            # melt mass of each sub-step [kg]; None: uniform melt
+    self.melt_burst_window = None                                    # burst window [s after the start of the step]; None: no burst
+    if melt_split == 'burst':
+        melt_peak_rate = _darcy_option(self.c, 'melt_peak_rate_darcy')   # [m s-1 of water]
+        melt_peak_hour = _darcy_option(self.c, 'melt_peak_hour_darcy')   # [h after the start of the step]
+        if not melt_peak_rate > 0:
+            raise ValueError(f'melt_peak_rate_darcy is {melt_peak_rate}. It must be above 0 m s-1.')
+        if not 0. <= melt_peak_hour <= 24.:
+            raise ValueError(f'melt_peak_hour_darcy is {melt_peak_hour}. It must be from 0 to 24 h.')
+        burst_schedule, self.melt_burst_window = _melt_schedule(melt_mass_tot, timetot, dtsub, melt_peak_rate, melt_peak_hour)
     try:
         rain_vol_tot = self.rainSec[iii] * S_PER_YEAR * RHO_I_MGM    # total rain [m we]
     except (AttributeError, IndexError):
@@ -1469,8 +1577,14 @@ def darcyscheme(self,iii):
     while timer < timetot:  
         n_substeps += 1
         ### Melt upper nodes ###
-        if meltflux_mass > 0:
-            meltstep_mass = meltflux_mass * dtsub             # melt mass over dtsub time interval [kg]
+        if burst_schedule is not None:
+            meltstep_mass = burst_schedule[n_substeps - 1] if n_substeps <= len(burst_schedule) else 0.   # melt mass of this sub-step [kg]
+            melt_this_substep = meltstep_mass > 0
+        else:
+            melt_this_substep = meltflux_mass > 0
+        if melt_this_substep:
+            if burst_schedule is None:
+                meltstep_mass = meltflux_mass * dtsub         # melt mass over dtsub time interval [kg]
             mass_sum      = np.cumsum(self.mass)              # depth-cumulated mass (local; not self.mass_sum)
             ind1          = np.where(mass_sum >= meltstep_mass)[0][0]  # bottom-most node affected by melt
             pm_mass       = mass_sum[ind1] - meltstep_mass     # mass of partially melted node

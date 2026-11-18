@@ -83,6 +83,12 @@ Both front functions take the cold degrees of the firn ahead of the front. They 
 - The label "(part year)" comes from the number of steps: a `StepTimer` on a stub model with monthly steps at the end of each month marks a full year of 12 steps as full and a last year of 6 steps as part.
 - `step_timing: "yes"` stops the run in the validation.
 
+`test_melt_split.py` checks the option `melt_split_darcy` of `darcyscheme` (the melt of a step falls in a burst, implicit flow step only).
+
+- The schedule tests check `_melt_schedule` on its own. The sum equals the melt (relative 1e-12). The burst is rounded up to whole sub-steps, and the rate is at or below the peak rate. The window is centred on `melt_peak_hour_darcy` to half a sub-step. It is moved to fit at the start and at the end of the step. A melt that the peak rate cannot give in the step gives the uniform rule. Zero melt gives zeros and `None`. A shorter last sub-step takes melt in proportion to its length.
+- The scheme tests check that the water budget closes with a burst, that a snapshot before the burst shows no surface lowering (and a uniform run does) and that the surface lowering of the step is close to that of the uniform run, that no sub-step of the burst is counted as idle, that the default keys give the arrays of no key (bit for bit), and that a burst that fills the step gives the arrays of the uniform run.
+- The validator and `darcyscheme` stop the run for "burst" with the explicit step, a `melt_peak_rate_darcy` of 0 or below, a `melt_peak_hour_darcy` outside 0 to 24, and an unknown `melt_split_darcy`. The validator does not stop for "burst" with the explicit step if the darcy scheme does not run (`liquid` is not `darcy`, or `MELT` is false).
+
 `test_heat_substep.py` checks the argument `dt` of `heatDiff` and `refreezeDiff` (`diffusion.py`).
 
 - `dt=None` gives the same arrays, bit for bit, as `dt=self.dt[iii]`. The test covers `heatDiff` and `refreezeDiff` with `transient_solve_enthalpy`.
