@@ -147,7 +147,7 @@ def firnConductivity(self, iii, K_ice):
     return K_firn
 ##########################
 
-def heatDiff(self, iii):
+def heatDiff(self, iii, dt=None):
     '''
     Standard heat diffusion step (no liquid water / no phase change).
 
@@ -167,8 +167,12 @@ def heatDiff(self, iii):
     An older/alternate version of this logic may exist as heatDiffOLD()
     (see comment in original source); not covered by this docstring.
 
-    :param iii: current model time step index (used to index self.dt,
-        and to control one-time print statements via firnConductivity)
+    :param iii: current model time step index (used to index self.dt
+        when dt is None, and to control one-time print statements via
+        firnConductivity)
+    :param dt: duration of the solve [s]. None (default) means the full
+        step self.dt[iii]. The surface value stays self.Tz[0], as the
+        caller sets it.
 
     :return: self.Tz (updated temperature profile [K]), self.T10m
         (temperature at 10 m depth [K], or NaN if the firn column is
@@ -181,6 +185,9 @@ def heatDiff(self, iii):
         self-assignments (K_firn = K_firn; phi_0 = phi_0) left over from
         editing; safe to remove.
     '''
+
+    if dt is None:
+        dt = self.dt[iii]
 
     nz_P            = len(self.z) #- 1
     nz_fv           = nz_P - 2 # this does not get used
@@ -214,7 +221,7 @@ def heatDiff(self, iii):
     Gamma_P         = K_firn
     c_vol           = self.rho * c_firn
 
-    self.Tz         = transient_solve_TR(z_edges, z_P, self.dt[iii], Gamma_P, phi_0, nz_P, phi_s, c_vol)
+    self.Tz         = transient_solve_TR(z_edges, z_P, dt, Gamma_P, phi_0, nz_P, phi_s, c_vol)
 
     try:
         self.T10m       = self.Tz[np.where(self.z>=10.0)[0][0]]
@@ -249,7 +256,7 @@ def heatDiff(self, iii):
 #     dZ = np.diff(z_edges)
 #     return np.sum((th_solid + th_liquid) * dZ)                  # [kg/m2]
 
-def refreezeDiff(self, iii, solver_name='transient_solve_enthalpy'):
+def refreezeDiff(self, iii, solver_name='transient_solve_enthalpy', dt=None):
     '''
     Heat diffusion step with refreezing (liquid water present in firn).
 
@@ -270,11 +277,15 @@ def refreezeDiff(self, iii, solver_name='transient_solve_enthalpy'):
     claw_dry -- currently only transient_solve_enthalpy), and an overall
     mass conservation check (pre- vs. post-solve total H2O mass).
 
-    :param iii: current model time step index (used to index self.dt,
-        for print diagnostics, and passed through to firnConductivity)
+    :param iii: current model time step index (used to index self.dt
+        when dt is None, for print diagnostics, and passed through to
+        firnConductivity)
     :param _solver: string key selecting which solver function to call;
         must match a key in solver_map (currently 'transient_solve_enthalpy',
         'transient_solve_ahc', or 'transient_solve_decp').
+    :param dt: duration of the solve [s]. None (default) means the full
+        step self.dt[iii]. The surface value stays self.Tz[0], as the
+        caller sets it.
     :return: self.Tz (updated temperature [K]), self.T10m (temperature at
         10 m depth [K] or None), self.rho (updated density [kg/m3]),
         self.mass (updated solid mass [kg/m2] per layer), self.LWC
@@ -293,6 +304,9 @@ def refreezeDiff(self, iii, solver_name='transient_solve_enthalpy'):
         conservation check (tot_heat_pre is computed but no tot_heat_post
         comparison exists yet).
     '''
+
+    if dt is None:
+        dt = self.dt[iii]
 
     solver_map = {
         'transient_solve_enthalpy': transient_solve_enthalpy,
@@ -362,7 +376,7 @@ def refreezeDiff(self, iii, solver_name='transient_solve_enthalpy'):
     lwc_old = vol_liquid.copy()
 
     ### call the solver
-    solver_out = solver(z_edges, z_P, self.dt[iii], K_eff, TzC, th_liquid, th_solid, iii)
+    solver_out = solver(z_edges, z_P, dt, K_eff, TzC, th_liquid, th_solid, iii)
     ###
     self.total_count += solver_out['count']
 
