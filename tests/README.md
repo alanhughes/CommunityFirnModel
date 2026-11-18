@@ -96,6 +96,15 @@ Both front functions take the cold degrees of the firn ahead of the front. They 
 - On a wet column, 48 steps of 1800 s with each of the four solvers keep the total mass to 1e-9 kg/m², keep `Tz` at or below 273.15 K and keep `LWC` at or above zero.
 - On the same wet column, the column liquid water of 48 steps of 1800 s with `transient_solve_enthalpy` is within 0.2 kg/m² of one step of 86400 s.
 
+`test_conduction_in_loop.py` checks the option `conduction_interval_darcy` ("substep" runs heat conduction once in each implicit sub-step, "step" runs it once for the whole step). The scheme tests use a synthetic column with the heat attributes (`Ts`, `melt_solver`, `total_count`, `T10m`).
+
+- A count of the calls of `heatDiff` and `refreezeDiff`: one call in each sub-step, each with `dt` equal to the sub-step, and none after the scheme. A short run on daily steps (the step is a little longer than a day, so the last sub-step is short) checks that the calls of a step with water cover the step, and that a step with no water makes one call with `dt=None`. "step" makes no call in the scheme.
+- The water budget closes at 1e-12, `refrozen_conduction` is above 0, and `refrozen_flow` plus `refrozen_conduction` equals `refrozen`. The layer total of `self.refrozen` equals `refrozen`.
+- The top node: a wet node 0 under a cold surface does not stay cold and wet, and the cold-layer check does not fire. `_freeze_top_node` freezes with the cold content of node 0 and leaves node 0 at the melting point when the cold content is used up.
+- The energy: with no melt and no runoff, the change of the heat of the column equals `surface_heat` plus `reset_heat`. Both terms come from the solved state. The tolerance is 3 % of the heat that the two terms carry. The measured error is 1.7 % to 1.9 %, from the specific heat: the refreezing block uses the value at the node temperature, and the enthalpy solver uses 2097 J kg-1 K-1.
+- The default: a run with the key absent and a run with "step" give identical arrays (`np.array_equal`).
+- The validator stops "substep" with the explicit step, `manualT`, `heatDiff` false, `SEB` true, `meltwater_solver` "legacy" and an unknown value. `darcyscheme` stops for an unknown value and for "substep" with the explicit step.
+
 ## Compare two commits
 
 `compare_commits.py` checks that two commits give the same model results. Run it by hand before you close a change that must keep the results. Put the result in the PR description. Commit your work first, because the script reads commits only.

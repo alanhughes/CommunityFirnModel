@@ -4,7 +4,7 @@ import numpy as np
 import time
 import sys
 
-from diffusion import heatDiff
+from diffusion import heatDiff, refreezeDiff
 from ModelOutputs import DARCY_SNAPSHOT_OUTPUTS
 
 from darcy_funcs import hydrconducsat_Calonne
@@ -988,12 +988,14 @@ _DARCY_DEFAULTS = {
     'snapshot_fraction_darcy': 0.5, 'flow_step_darcy': 'explicit', 'dtsub_implicit_darcy': 1800.,
     'capillary_implicit_darcy': 'none', 'capillary_pressure_darcy': 700.,
     'melt_split_darcy': 'uniform', 'melt_peak_rate_darcy': 2.8e-7, 'melt_peak_hour_darcy': 12.,
-}  # the values the scheme used before these options were configurable (snapshot_fraction_darcy, flow_step_darcy, dtsub_implicit_darcy, capillary_implicit_darcy, capillary_pressure_darcy, melt_split_darcy, melt_peak_rate_darcy and melt_peak_hour_darcy are new)
+    'conduction_interval_darcy': 'step',
+}  # the values the scheme used before these options were configurable (snapshot_fraction_darcy, flow_step_darcy, dtsub_implicit_darcy, capillary_implicit_darcy, capillary_pressure_darcy, melt_split_darcy, melt_peak_rate_darcy, melt_peak_hour_darcy and conduction_interval_darcy are new)
 _KSAT_LAWS_DARCY = ('Calonne', 'power_law')        # values of Ksat_darcy
 _KREL_LAWS_DARCY = ('vanGenuchten', 'power_law')   # values of krel_darcy
 _FLOW_STEPS_DARCY = ('explicit', 'implicit_gravity')   # values of flow_step_darcy
 _CAPILLARY_LAWS_DARCY = ('none', 'power_law')          # values of capillary_implicit_darcy
 _MELT_SPLITS_DARCY = ('uniform', 'burst')              # values of melt_split_darcy
+_CONDUCTION_INTERVALS_DARCY = ('step', 'substep')      # values of conduction_interval_darcy
 _darcy_missing_reported = set()
 
 def _darcy_option(config, key):
@@ -1009,6 +1011,73 @@ def _darcy_option(config, key):
     return _DARCY_DEFAULTS[key]
 ### end _darcy_option ###
 #########################
+
+def _freeze_top_node(self):
+    """
+    Freeze the water of node 0 with the cold content of node 0.
+
+    The heat solvers hold node 0 at the surface value, so they do not solve it and the water of
+    node 0 takes no part in their phase change. After the surface value is set below the melting
+    point, node 0 would stay cold and wet, which is not a physical state (it is a night crust that
+    freezes). The formula is the one of the refreezing block of darcyscheme: the cold content
+    divided by LF_I, limited by the water and by the pore space. The freezing warms node 0 toward
+    the melting point.
+
+    :return: the water that froze [kg m-2]
+    """
+    if not self.LWC[0] > 0. or not self.Tz[0] < T_MELT:
+        return 0.
+    cp_0         = 152.5 + 7.122 * self.Tz[0]                                     # specific heat of ice [J kg-1 K-1]
+    cold_content = cp_0 * self.mass[0] * (T_MELT - self.Tz[0])                   # [J]
+    refr_pot_v   = RHO_I_MGM * max(0., (RHO_I - self.rho[0]) / RHO_I) * self.dz[0] * RHO_W_KGM - 1e-6   # pore space [kg]
+    refr         = max(0., min(self.LWC[0] * RHO_W_KGM, cold_content / LF_I, refr_pot_v))
+    self.LWC[0]  = max(0., self.LWC[0] - refr / RHO_W_KGM)
+    self.mass[0] = self.mass[0] + refr
+    self.rho[0]  = self.mass[0] / self.dz[0]
+    if refr >= cold_content / LF_I:
+        self.Tz[0] = T_MELT   # the cold content is used up: node 0 is at the melting point, with no rounding error that would leave it cold and wet
+    else:
+        self.Tz[0] = T_MELT - (cold_content - refr * LF_I) / (cp_0 * self.mass[0])
+    return refr
+### end _freeze_top_node ###
+
+
+def _conduction_substep(self, iii, dtsub):
+    """
+    Heat conduction over one sub-step of the implicit flow step (conduction_interval_darcy "substep").
+
+    The sub-step is the interval of the solve. The surface value is Ts[iii], capped at the melting
+    point. The call is the same choice as the conduction block of time_evolve(): refreezeDiff if any
+    node has water, else heatDiff.
+
+    Three things are particular to the fixed top node:
+
+    - The heat solvers do not solve node 0. Each time this function sets Tz[0], it counts the heat
+      that the change gives to the node, mass * c * (T_new - T_old). The sum is the "reset heat".
+      The energy of the column changes by the heat through the face between node 0 and node 1 plus
+      the reset heat.
+    - The water of node 0 is frozen by _freeze_top_node after the solve.
+    - The water that the solve freezes (the night freeze) is the signed difference of the water in
+      each node. A signed difference closes the water budget even if a solve makes liquid.
+
+    :return: (refrozen water of each node [m we], heat through the face 0|1 [J m-2], reset heat [J m-2])
+    """
+    if self.melt_solver is None:
+        raise ValueError('conduction_interval_darcy "substep" needs a meltwater_solver other than "legacy".')
+    T_old = self.Tz[0]
+    T_new = min(self.Ts[iii], T_MELT)
+    reset_heat = self.mass[0] * (152.5 + 7.122 * 0.5 * (T_old + T_new)) * (T_new - T_old)   # [J m-2]
+    self.Tz[0] = T_new
+    LWC_before = np.copy(self.LWC)
+    if np.any(self.LWC > 0.):
+        refreezeDiff(self, iii, solver_name=self.melt_solver, dt=dtsub)
+    else:
+        heatDiff(self, iii, dt=dtsub)
+    surface_heat = self.surface_heat_last
+    _freeze_top_node(self)
+    self.heat_time_in_scheme = getattr(self, 'heat_time_in_scheme', 0.) + dtsub   # time_evolve() conducts for the rest of the step only
+    return (LWC_before - self.LWC), surface_heat, reset_heat
+### end _conduction_substep ###
 
 def _melt_schedule(melt_mass_tot, timetot, dtsub, peak_rate, peak_hour):
     '''
@@ -1386,6 +1455,24 @@ def darcyscheme(self,iii):
         melt_split_darcy "burst". With heat conduction once for each step, the hour has no effect, only
         the rate does.
 
+    conduction_interval_darcy : str
+        The interval of the heat conduction. "step" (default): conduction runs once for the whole model
+        step, after the scheme (as in the model without the key). "substep": conduction runs once at the
+        end of each implicit sub-step, so a night freeze can act on the water of the same day.
+        "substep" needs flow_step_darcy "implicit_gravity". Details:
+        - The order in a sub-step is melt removal, flow, freezing block, conduction. The flow step and
+          the freezing block keep their cold-content rule. Conduction freezes more water when it
+          removes heat.
+        - The surface value is Ts[iii], capped at the melting point, in every sub-step. Node 0 is not
+          solved by the heat solvers. The code sets its temperature, counts the heat of each reset, and
+          freezes the water of node 0 with its own cold content.
+        - time_evolve() counts the time that the sub-steps covered (self.heat_time_in_scheme). It
+          runs the conduction block only for the rest of the step. If the sub-steps cover the whole
+          step, it skips the block.
+        - The water that conduction freezes is added to refr_tot and to self.refrozen. The fields
+          refrozen_flow, refrozen_conduction, surface_heat and reset_heat of self.melt_diagnostics
+          give the parts. With "step" the conduction fields are zero.
+
     capillary_pressure_darcy : float [Pa]
         The coefficient c of p_c = c / S. Default 700 (gamma / d_p of Meyer and Hewitt, 2017).
         It is one value for the whole column. It is not linked to Ksat_k0_darcy: if you
@@ -1493,6 +1580,12 @@ def darcyscheme(self,iii):
         raise ValueError(f'melt_split_darcy is "{melt_split}". It must be one of {_MELT_SPLITS_DARCY}.')
     if melt_split == 'burst' and flow_step != 'implicit_gravity':
         raise ValueError('melt_split_darcy "burst" needs flow_step_darcy "implicit_gravity".')
+    conduction_interval = _darcy_option(self.c, 'conduction_interval_darcy')
+    if conduction_interval not in _CONDUCTION_INTERVALS_DARCY:
+        raise ValueError(f'conduction_interval_darcy is "{conduction_interval}". It must be one of {_CONDUCTION_INTERVALS_DARCY}.')
+    if conduction_interval == 'substep' and flow_step != 'implicit_gravity':
+        raise ValueError('conduction_interval_darcy "substep" needs flow_step_darcy "implicit_gravity".')
+    conduction_in_loop = (conduction_interval == 'substep')   # conduction in each sub-step of the implicit flow step
     implicit_flow = (flow_step == 'implicit_gravity')   # fixed sub-step, implicit gravity flow, no limiting flux
     capillary_head = None   # h_c = c / (rho_w g) of the capillary step [m]; None: no capillary step
     dtsub_fixed = dtsub               # sub-step of the implicit flow step [s]
@@ -1559,6 +1652,9 @@ def darcyscheme(self,iii):
     dh_melt        = 0.                  # surface lowering from melt removal over the routine [m] (<= 0), as in bucket()
     refr_tot       = 0.                  # total refreezing over the entire Darcy routine
     refr_layer     = np.zeros(ncv)       # per-layer refreezing over the routine [m we] (follows the grid when melt removes nodes)
+    refr_conduction = 0.                 # part of refr_tot that froze in the conduction of the sub-steps [m we]
+    surface_heat   = 0.                  # heat through the face between node 0 and node 1, summed over the conduction calls [J m-2]
+    reset_heat     = 0.                  # heat that the resets of Tz[0] gave to node 0, summed over the conduction calls [J m-2]
     dltz           = np.append(self.dz[0:-1]/2+self.dz[1:]/2,self.dz[-1]/2) # distance between centres of nodes
 
     if self.doublegrid: #if we have doublegrid: need to adjust gridtrack
@@ -1914,6 +2010,26 @@ def darcyscheme(self,iii):
         refr_tot = refr_tot + np.sum(refr) / RHO_W_KGM                  # accumulate total refreezing [m we]
         refr_layer = refr_layer + refr / RHO_W_KGM                      # and per layer [m we]
 
+        if conduction_in_loop:
+            ### Conduction ###
+            # The order in a sub-step is flow, freeze, conduction. This is the order of the model
+            # step with conduction_interval_darcy "step" (the scheme, then conduction), so the two
+            # settings differ only in the interval. Both freezing rules stay. The flow step needs
+            # its cold-content rule: the sweep uses it to stop water in a cold node, and conduction
+            # cannot bring back water that has passed a cold node. The two rules do not freeze the
+            # same water twice, because each brings a node to balance (dry and cold, or wet at the
+            # melting point). Conduction freezes more water only when it removes heat (the night
+            # freeze). The freeze block above uses cp_i(Tz), and the heat solve uses its own heat
+            # capacity, so the two differ by 1 to 2 % in the heat of the freezing.
+            refr_cond_layer, surface_heat_call, reset_heat_call = _conduction_substep(self, iii, dtsub)
+            refr_conduction = refr_conduction + np.sum(refr_cond_layer)
+            refr_tot   = refr_tot + np.sum(refr_cond_layer)                 # signed, so that the water budget closes
+            refr_layer = refr_layer + refr_cond_layer
+            surface_heat = surface_heat + surface_heat_call
+            reset_heat   = reset_heat + reset_heat_call
+            phi  = np.maximum(0, (RHO_I - self.rho) / RHO_I)                # the solve changed rho and Tz: update the state that the next sub-step reads
+            cp_i = 152.5 + 7.122 * self.Tz
+
         timer = timer + dtsub   # advance the sub-step timer
 
         if snapshot_at is not None and timer >= snapshot_at:
@@ -1953,6 +2069,10 @@ def darcyscheme(self,iii):
     self.melt_diagnostics['water_in'] = melt_mass_tot / RHO_W_KGM + np.sum(initial_lwc) + rain_vol_tot  # [m we]
     self.melt_diagnostics['lwc_end']  = np.sum(self.LWC)  # [m we]
     self.melt_diagnostics['refrozen'] = refr_tot          # [m we]
+    self.melt_diagnostics['refrozen_flow']       = refr_tot - refr_conduction   # [m we] froze in the flow step and the freezing block
+    self.melt_diagnostics['refrozen_conduction'] = refr_conduction              # [m we] froze in the conduction of the sub-steps (the night freeze)
+    self.melt_diagnostics['surface_heat'] = surface_heat  # [J m-2]
+    self.melt_diagnostics['reset_heat']   = reset_heat    # [J m-2]
     self.melt_diagnostics['runoff']   = runofftot         # [m we]
     self.melt_diagnostics['substeps'] = n_substeps
     if implicit_flow:
