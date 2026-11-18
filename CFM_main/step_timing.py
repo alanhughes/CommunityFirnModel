@@ -16,8 +16,8 @@ With the key on, a run gives:
   plain csv. The rows of one model year are written at the end of that year and
   the file is flushed, so a run that stops keeps the rows up to the last full
   year. An old step_timing.csv in resultsFolder is replaced at the start of the
-  main run. The spin-up removes resultsFolder only if it holds nothing but
-  .json and .hdf5 files, so an old file can stay until then.
+  main run. The spin-up removes only the .hdf5 files of resultsFolder, so an old
+  step_timing.csv stays until the next run with the key on replaces it.
 - One line for each model year on the standard output, with its own timestamp.
   The line says "(part year)" when the year has fewer steps than a full year,
   for example the first or the last year of a run that starts or ends in the year.
