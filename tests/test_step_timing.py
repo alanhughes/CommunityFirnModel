@@ -139,6 +139,22 @@ def test_stages_are_filled_as_the_run_goes(short_config, monkeypatch):
     for name in ('loop_start', 'switch'):
         assert set(stages[name]) == {'wall', 'cpu'}
         assert all(type(value) is float and np.isfinite(value) for value in stages[name].values())
+    # the rows of each full year before the stop are in the file
+    with open(run.folder / 'step_timing.csv', newline='') as f:
+        rows = list(csv.DictReader(f))
+    assert [int(row['step']) for row in rows] == list(range(len(rows)))
+    assert sum(1 for row in rows if int(float(row['modeltime'])) == 1980) == 12
+
+
+@pytest.mark.conservation
+def test_scheme_is_nomelt_when_melt_is_off(short_config):
+    run = short_config(years=1, MELT=False, step_timing=True)
+    model = run.run()
+    with open(run.folder / 'step_timing.csv', newline='') as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == model.stp
+    assert all(row['scheme'] == 'nomelt' and row['melt_mwe'] == '' for row in rows)
+    assert model.step_timing_stages['switch'] is None
 
 
 @pytest.mark.unit
