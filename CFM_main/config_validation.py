@@ -98,6 +98,7 @@ ALLOWED_VALUES = {
     'flow_step_darcy': {'explicit', 'implicit_gravity'},
     'capillary_implicit_darcy': {'none', 'power_law'},
     'melt_split_darcy': {'uniform', 'burst'},
+    'conduction_interval_darcy': {'step', 'substep'},
 }
 
 # Optional keys that must be a boolean.
@@ -177,7 +178,7 @@ KNOWN_KEYS = {
     'Ksat_darcy', 'Ksat_k0_darcy', 'viscosity_darcy', 'krel_darcy', 'krel_exponent_darcy',
     'snapshot_fraction_darcy', 'flow_step_darcy', 'dtsub_implicit_darcy',
     'capillary_implicit_darcy', 'capillary_pressure_darcy',
-    'melt_split_darcy', 'melt_peak_rate_darcy', 'melt_peak_hour_darcy',
+    'melt_split_darcy', 'melt_peak_rate_darcy', 'melt_peak_hour_darcy', 'conduction_interval_darcy',
     # SEB
     'SEB', 'SEB_TL_thick', 'albedo_factor',
     'SEB_turb_method', 'SEB_roughness_mode', 'SEB_z0m', 'SEB_z0h', 'SEB_z0q',
@@ -301,6 +302,27 @@ def validate_config(c, config_path=None):
         hour = c['melt_peak_hour_darcy']
         if isinstance(hour, bool) or not isinstance(hour, (int, float)) or not 0 <= hour <= 24:
             errors.append("key 'melt_peak_hour_darcy' should be a number from 0 to 24 (hours after the start of the step); got {!r}".format(hour))
+
+    # 3d. Conduction in each sub-step of the darcy scheme.
+    # Conduction in the sub-steps needs the implicit flow step (the explicit sub-step can be 60 s or less,
+    # and thin nodes affect it). The heat solve must be on and driven by the model (not manualT, and
+    # heatDiff true). The surface energy balance sets Ts and the melt, and its surface heat term is
+    # not yet reliable, so the key does not run with SEB. Only the solvers 'enthalpy' and 'ncz' of
+    # refreezeDiff are allowed (see the error text for the reason).
+    if c.get('conduction_interval_darcy') == 'substep':
+        if c.get('flow_step_darcy', 'explicit') != 'implicit_gravity':
+            errors.append("'conduction_interval_darcy' is 'substep', which needs 'flow_step_darcy' to be 'implicit_gravity'")
+        if c.get('manualT'):
+            errors.append("'conduction_interval_darcy' is 'substep', which does not work with 'manualT' true")
+        if not c.get('heatDiff'):
+            errors.append("'conduction_interval_darcy' is 'substep', which needs 'heatDiff' to be true")
+        if c.get('SEB', False):
+            errors.append("'conduction_interval_darcy' is 'substep', which does not work with 'SEB' true")
+        solver = c.get('meltwater_solver', 'legacy' if 'LWC_heat' in c else 'enthalpy')   # a lone 'LWC_heat' runs as 'legacy'
+        if solver not in ('enthalpy', 'ncz'):
+            errors.append("'conduction_interval_darcy' is 'substep', which needs 'meltwater_solver' to be 'enthalpy' or 'ncz'; "
+                          "got {!r}. 'ahc' does not count the latent heat of the water that freezes. 'decp' uses internal "
+                          "steps, and its surface heat record does not match them. 'legacy' has no ghost node solve.".format(solver))
 
     # 5. Deprecated and unknown keys -> warnings only.
     # claude, 26/09/11: deprecated keys are checked first so they are not

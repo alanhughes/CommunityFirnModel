@@ -1412,6 +1412,7 @@ class FirnDensityNoSpin:
             if timing: timing.mark('pre')
             ######################
             ### MELT #############
+            self.heat_time_in_scheme = 0.   # time that the sub-steps of the scheme conducted heat for in this step [s]
             if self.MELT:
                 if ((iii==0) and ((self.c['liquid'] == 'prefsnowpack') or (self.c['liquid'] == 'resingledomain'))):
                     print('WARNING: prefsnowpack and resingledomain liquid schemes are still in development. email Max for more details.')
@@ -1693,12 +1694,28 @@ class FirnDensityNoSpin:
 
             if timing: timing.mark('mid')
             Ts_old = self.Tz[0]
-            if self.c['manualT']: # manual temperature measurements are fed into CFM
+            # With conduction_interval_darcy "substep", the sub-steps of the scheme have conducted heat for
+            # part or all of the step. Count the time, not a flag: a count stays correct if a later change
+            # covers only part of the step. Conduction here runs for the rest only.
+            heat_time_rest = self.dt[iii] - self.heat_time_in_scheme
+            if heat_time_rest < -1e-6:
+                raise ValueError(f'The sub-steps of the scheme conducted heat for {self.heat_time_in_scheme} s, '
+                                 f'which is more than the step of {self.dt[iii]} s (iii={iii}).')
+            dml_sum = 0. # the skip branch below does not set it, and the diagnostics read it
+            heat_dt = None  # None: the full step, bit for bit as without the key
+            skip_conduction = False
+            if self.heat_time_in_scheme > 0.:
+                heat_dt = heat_time_rest
+                skip_conduction = heat_time_rest <= 1e-6
+            if skip_conduction:
+                pass # the sub-steps of the scheme covered the whole step
+
+            elif self.c['manualT']: # manual temperature measurements are fed into CFM
                 tif = interpolate.interp1d(self.manualT_dep, self.manualT_temp[:,iii],kind='cubic')
                 self.Tz = tif(self.z)
 
             elif (self.c['heatDiff'] and not self.MELT): # no melt, so use regular heat diffusion
-                self.Tz, self.T10m  = heatDiff(self,iii)
+                self.Tz, self.T10m  = heatDiff(self,iii,dt=heat_dt)
 
             elif (not self.c['heatDiff'] and not self.MELT): # user says no heat diffusion, so just set the temperature of the new box on top.
                 self.Tz = self.Ts[iii]*np.ones_like(self.Tz)
@@ -1706,7 +1723,7 @@ class FirnDensityNoSpin:
                     print('warning: heat diffusion off, setting temp to Ts[iii]')
 
             elif ((self.MELT) and (np.all(self.LWC==0.))): #VV regular heat diffusion if no water in column (all refrozen or 0 water holding cap)
-                self.Tz, self.T10m  = heatDiff(self,iii)
+                self.Tz, self.T10m  = heatDiff(self,iii,dt=heat_dt)
                 dml_sum = 0
 
             elif np.any(self.LWC>0.): # enthalpy diffusion if water in column
@@ -1730,7 +1747,7 @@ class FirnDensityNoSpin:
                 else: # 'enthalpy', 'ahc', 'decp', 'ncz': finite-volume solvers in solver.py
                     mass_pre = np.sum(self.mass)
 
-                    self.Tz, self.T10m, self.rho, self.mass, self.LWC, dml_sum = refreezeDiff(self, iii, solver_name=self.melt_solver)
+                    self.Tz, self.T10m, self.rho, self.mass, self.LWC, dml_sum = refreezeDiff(self, iii, solver_name=self.melt_solver, dt=heat_dt)
                     mass_post = np.sum(self.mass)
 
                 tot_heat_post = np.sum(CP_I_kJ*self.mass*self.Tz + T_MELT*CP_W/1000*self.LWC*RHO_W_KGM + LF_I_kJ*self.LWC*RHO_W_KGM)

@@ -46,6 +46,7 @@ from solver import (
     transient_solve_ahc,
     transient_solve_decp,
     transient_solve_ncz,
+    _fv_geometry,
     transient_solve_EN_old  # claude, 26/09/10: needed by enthalpyDiff_old below; was missing, which
                              # would have raised NameError the moment enthalpyDiff_old tried to call it.
 )
@@ -147,6 +148,23 @@ def firnConductivity(self, iii, K_ice):
     return K_firn
 ##########################
 
+def _surface_heat(z_edges, z_P, Gamma_P, T_surface, T_node1, dt):
+    '''
+    Heat that flows through the face between node 0 and node 1 in one backward Euler solve [J m-2].
+
+    The heat solvers hold the first node of the grid at the surface value, so they do not solve it.
+    The heat through the face between the first and the second node is then the only heat that the
+    solve gives to the nodes it solves. With the ghost node of the darcy scheme (conduction in each
+    sub-step), the first node is the ghost node and the second node is node 0 of the column. The value is the face
+    conductance (Patankar 1980, eq. 4.9) times (T_surface - T_node1) times dt, with T_node1 the solved
+    temperature of node 1. It is computed from the solved state, not from the change of the energy of
+    the column, so that an energy check against it is a check of the solver. Positive: heat into the
+    column.
+    '''
+    dZ, deltaZ_u, deltaZ_d, Gamma_u, Gamma_d = _fv_geometry(z_edges, z_P, Gamma_P)
+    return Gamma_u[1] / deltaZ_u[1] * (T_surface - T_node1) * dt
+
+
 def heatDiff(self, iii, dt=None):
     '''
     Standard heat diffusion step (no liquid water / no phase change).
@@ -173,6 +191,11 @@ def heatDiff(self, iii, dt=None):
     :param dt: duration of the solve [s]. None (default) means the full
         step self.dt[iii]. The surface value stays self.Tz[0], as the
         caller sets it.
+
+    Sets self.surface_heat_last, the heat through the face between the
+    first node (the fixed node) and the second node in this solve [J m-2]
+    (positive into the column). It is an attribute only and does not change
+    the result.
 
     :return: self.Tz (updated temperature profile [K]), self.T10m
         (temperature at 10 m depth [K], or NaN if the firn column is
@@ -222,6 +245,7 @@ def heatDiff(self, iii, dt=None):
     c_vol           = self.rho * c_firn
 
     self.Tz         = transient_solve_TR(z_edges, z_P, dt, Gamma_P, phi_0, nz_P, phi_s, c_vol)
+    self.surface_heat_last = _surface_heat(z_edges, z_P, Gamma_P, phi_s, self.Tz[1], dt)
 
     try:
         self.T10m       = self.Tz[np.where(self.z>=10.0)[0][0]]
@@ -296,6 +320,16 @@ def refreezeDiff(self, iii, solver_name='transient_solve_enthalpy', dt=None):
     Reference: Voller, Swaminathan, and Thomas (1990) for enthalpy method;
         see individual solver docstrings in solver.py for method-specific
         references.
+
+    Sets self.surface_heat_last, the heat through the face between the
+    first node (the fixed node) and the second node in this solve [J m-2]
+    (positive into the column), from the solved temperature of the second
+    node before the clamp. It is an attribute only and does not change the
+    result. It is the heat that the solver used only for the solvers with
+    one implicit solve ('enthalpy', 'ncz'). For 'decp' it is not: the solver
+    takes internal steps, and the record uses the final state for the full
+    dt. For 'ahc' the solver does not count the latent heat. The validator
+    stops conduction_interval_darcy "substep" with these two solvers.
 
     NOTE: several intermediate quantities computed in this function
         (vol_total, mass_total, rho_total, and the commented-out c_vol
@@ -379,6 +413,7 @@ def refreezeDiff(self, iii, solver_name='transient_solve_enthalpy', dt=None):
     solver_out = solver(z_edges, z_P, dt, K_eff, TzC, th_liquid, th_solid, iii)
     ###
     self.total_count += solver_out['count']
+    self.surface_heat_last = _surface_heat(z_edges, z_P, K_eff, self.Tz[0], solver_out['TzC_return'][1] + T_MELT, dt)
 
     self.Tz         = solver_out['TzC_return'] + 273.15
     self.rho        = solver_out['th_solid']
