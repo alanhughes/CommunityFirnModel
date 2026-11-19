@@ -11,7 +11,7 @@ import firn_density_nospin
 import melt
 from cfm_testing import SyntheticColumn
 from config_validation import ConfigValidationError, validate_config
-from constants import LF_I, RHO_W_KGM, T_MELT
+from constants import CP_I, LF_I, RHO_W_KGM, T_MELT
 
 DAY = 86400.
 SUBSTEP = 1800.
@@ -142,11 +142,11 @@ def test_the_step_setting_has_no_conduction_freezing():
     melt.darcyscheme(column, 0)
     diagnostics = column.melt_diagnostics
     assert diagnostics['refrozen_conduction'] == 0.
-    assert diagnostics['surface_heat'] == 0. and diagnostics['reset_heat'] == 0.
+    assert diagnostics['surface_heat'] == 0.
     assert diagnostics['refrozen_flow'] == diagnostics['refrozen']
 
 
-### 3. The top node ###
+### 3. The top node and the ghost node ###
 
 @pytest.mark.scheme
 def test_wet_top_node_does_not_stay_cold_and_wet(capsys):
@@ -161,42 +161,127 @@ def test_wet_top_node_does_not_stay_cold_and_wet(capsys):
 
 
 @pytest.mark.unit
-def test_top_node_helper_freezes_with_its_own_cold_content():
-    column = wet_top_column(water=3e-4, nodes=1)
-    column.Tz[0] = T_MELT - 5.
-    mass_before, water_before = column.mass[0], column.LWC[0] * RHO_W_KGM
-    froze = melt._freeze_top_node(column)
-    cold_content = (152.5 + 7.122 * (T_MELT - 5.)) * mass_before * 5.
-    assert froze == pytest.approx(cold_content / LF_I, rel=1e-12)    # the water is more than the cold content freezes
-    assert column.Tz[0] == T_MELT
-    assert column.mass[0] == pytest.approx(mass_before + froze)
-    assert column.LWC[0] * RHO_W_KGM == pytest.approx(water_before - froze)
-    assert melt._freeze_top_node(column) == 0.                        # at 0 C: nothing more
+@pytest.mark.parametrize('solver', ['transient_solve_enthalpy', 'transient_solve_ncz'])
+def test_wet_top_node_freezes_only_with_the_heat_that_leaves(solver):
+    # Node 0 is wet at 0 C, the column below is at 0 C, and the surface is 1 K colder. Node 0 holds more water
+    # than the heat through the surface can freeze in one sub-step. With a fixed node 0, the solver would
+    # freeze all the water for free. With the ghost node, the latent heat of the water that freezes is the
+    # heat that leaves through the surface, and node 0 stays wet.
+    column = wet_top_column(SUBSTEP_KEY, surface=T_MELT - 1., firn=T_MELT, water=1.5e-3, nodes=1)
+    column.melt_solver = solver
+    water_before = column.LWC[0] * RHO_W_KGM
+    froze, surface_heat = melt._conduction_substep(column, 0, SUBSTEP)
+    latent = froze[0] * RHO_W_KGM * LF_I
+    assert 0. < froze[0] * RHO_W_KGM < water_before
+    assert column.LWC[0] > 0.
+    assert latent == pytest.approx(-surface_heat, rel=1e-4)
+
+
+@pytest.mark.unit
+def test_the_ghost_node_leaves_the_column_arrays_as_they_were():
+    column = wet_top_column(SUBSTEP_KEY)
+    shapes = {name: getattr(column, name).shape for name in ('z', 'dz', 'rho', 'mass', 'LWC', 'Tz')}
+    z, dz = column.z.copy(), column.dz.copy()
+    melt._conduction_substep(column, 0, SUBSTEP)
+    assert {name: getattr(column, name).shape for name in shapes} == shapes
+    assert np.array_equal(column.z, z) and np.array_equal(column.dz, dz)
+    assert np.all(np.isfinite(column.Tz)) and np.all(column.Tz <= T_MELT)
 
 
 ### 4. The energy ###
 
+def solver_heat(column):
+    '''Heat of the column [J m-2] in the metric of the refreezing solvers: constant specific heat of ice, plus latent.'''
+    return np.sum(column.mass * CP_I * (column.Tz - T_MELT)) + np.sum(column.LWC * RHO_W_KGM * LF_I)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('solver', ['transient_solve_enthalpy', 'transient_solve_ncz'])
+@pytest.mark.parametrize('surface, firn, water, nodes', [(253.15, 258.15, 1.5e-3, 1), (253.15, 258.15, 1e-4, 10),
+                                                         (272.15, 271.15, 1.5e-3, 1)])
+def test_one_conduction_call_closes_the_energy_with_a_wet_top_node(solver, surface, firn, water, nodes):
+    # Node 0 is wet and the surface is cold: the case in which a fixed node 0 freezes its water for free.
+    # The heat of the column changes by the heat through the face between the ghost node and node 0, in the
+    # metric of the solver. The measured error is below 3e-7 of the heat.
+    column = wet_top_column(SUBSTEP_KEY, surface=surface, firn=firn, water=water, nodes=nodes)
+    column.melt_solver = solver
+    heat_before = solver_heat(column)
+    froze, surface_heat = melt._conduction_substep(column, 0, SUBSTEP)
+    assert froze[0] > 0.                                    # node 0 freezes water, with the latent heat counted
+    error = solver_heat(column) - heat_before - surface_heat
+    print(f'{solver}, surface {surface} K: heat through the surface {surface_heat:.0f}, error {error:.3g} J/m2')
+    assert abs(error) < 1e-6 * abs(surface_heat)
+
+
+@pytest.mark.unit
+def test_one_conduction_call_closes_the_energy_with_no_water():
+    # heatDiff only. Its heat capacity is the specific heat of ice at the temperature before the solve.
+    column = conduction_column(SUBSTEP_KEY, melt_amount=0., surface=253.15, firn=258.15)
+    T_before, mass = column.Tz.copy(), column.mass.copy()
+    froze, surface_heat = melt._conduction_substep(column, 0, SUBSTEP)
+    change = np.sum(mass * (152.5 + 7.122 * T_before) * (column.Tz - T_before))
+    print(f'heat through the surface {surface_heat:.0f}, error {change - surface_heat:.3g} J/m2')
+    assert np.all(froze == 0.)
+    assert change == pytest.approx(surface_heat, rel=1e-9)
+
+
 @pytest.mark.scheme
-@pytest.mark.parametrize('surface, firn', [(253.15, 258.15), (258.15, 263.15)])
-def test_column_heat_change_is_the_surface_heat_plus_the_reset_heat(surface, firn):
-    # No melt and no runoff: the heat of the column (sensible plus latent) changes by the heat through the
-    # face between node 0 and node 1 and by the heat of the resets of node 0. The two terms come from the
-    # solved state, not from the energy change. The refreezing block uses the specific heat of ice at the
-    # node temperature, and the enthalpy solver uses a constant 2097 J kg-1 K-1 (5 % higher at 258 K). So
-    # the tolerance is 3 % of the heat that the two terms carry. The measured error is about 2 %.
+@pytest.mark.parametrize('surface, firn', [(253.15, 258.15), (258.15, 263.15), (268.15, 271.15)])
+def test_column_heat_change_is_the_surface_heat(surface, firn):
+    # No melt and no runoff, a wet node 0 at a cold surface, 48 sub-steps: the heat of the column (specific
+    # heat of ice at the node temperature, plus latent) changes by the heat through the face between the ghost
+    # node and node 0. The surface heat comes from the solved state, not from the energy change. The only
+    # difference is the freezing block of the scheme, which uses the specific heat of ice at the node
+    # temperature, and the solver, which uses a constant 2097 J kg-1 K-1. The measured error is 0.04 % to
+    # 0.18 % of the surface heat (0.58 % if the water is one wet node of 0.3 kg m-2). The tolerance is 0.5 %.
     column = wet_top_column(SUBSTEP_KEY, surface=surface, firn=firn)
     heat_before = column_heat(column)
     melt.darcyscheme(column, 0)
     diagnostics = column.melt_diagnostics
     assert diagnostics['runoff'] == 0.
     assert diagnostics['refrozen_conduction'] > 0.
-    assert diagnostics['surface_heat'] != 0.
-    change = column_heat(column) - heat_before
-    expected = diagnostics['surface_heat'] + diagnostics['reset_heat']
-    error = change - expected
-    carried = abs(diagnostics['surface_heat']) + abs(diagnostics['reset_heat'])
-    print(f'surface {surface} K: change {change:.0f}, surface+reset {expected:.0f}, error {error:.0f} J/m2 = {error / carried:.4f} of {carried:.0f}')
-    assert abs(error) < 0.03 * carried
+    error = column_heat(column) - heat_before - diagnostics['surface_heat']
+    print(f'surface {surface} K: surface heat {diagnostics["surface_heat"]:.0f}, error {error:.0f} J/m2 = {error / abs(diagnostics["surface_heat"]):.4f}')
+    assert abs(error) < 0.005 * abs(diagnostics['surface_heat'])
+
+
+### 4b. The first step with water ###
+
+@pytest.mark.conservation
+def test_first_step_with_melt_runs_with_substep(short_config):
+    # With "substep" the sub-steps cover the step, and time_evolve() skips its conduction block. The
+    # diagnostics of the first step must still run.
+    run = short_config(years=1, start_year=1981, num_reps=1, liquid='darcy', DFfile='CFM_example_66.5_-46.25.pkl',
+                       DFresample='1d', TWriteInt=1, outputs=['density', 'depth', 'temperature', 'LWC'],
+                       flow_step_darcy='implicit_gravity', dtsub_implicit_darcy=SUBSTEP,
+                       conduction_interval_darcy='substep')
+    model = run.build()
+    model.snowmeltSec[0] = model.snowmeltSec.max()
+    model.snowmelt[0] = model.snowmelt.max()
+    assert model.snowmeltSec[0] > 0.
+    model.time_evolve()
+    assert np.all(np.isfinite(model.Tz))
+
+
+@pytest.mark.unit
+def test_time_evolve_stops_if_the_scheme_covered_more_than_the_step(short_config, monkeypatch):
+    run = short_config(years=1, start_year=1981, num_reps=1, liquid='darcy', DFfile='CFM_example_66.5_-46.25.pkl',
+                       DFresample='1d', TWriteInt=1, outputs=['density', 'depth', 'temperature', 'LWC'],
+                       flow_step_darcy='implicit_gravity', dtsub_implicit_darcy=SUBSTEP,
+                       conduction_interval_darcy='substep')
+    model = run.build()
+    model.snowmeltSec[0] = model.snowmeltSec.max()
+    model.snowmelt[0] = model.snowmelt.max()
+
+    def too_long(original):
+        def wrapper(self, iii):
+            result = original(self, iii)
+            self.heat_time_in_scheme = 2. * self.dt[iii]
+            return result
+        return wrapper
+    monkeypatch.setattr(firn_density_nospin, 'darcyscheme', too_long(firn_density_nospin.darcyscheme))
+    with pytest.raises(ValueError, match='more than the step'):
+        model.time_evolve()
 
 
 ### 5. The default ###

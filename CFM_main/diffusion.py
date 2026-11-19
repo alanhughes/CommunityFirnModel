@@ -152,8 +152,10 @@ def _surface_heat(z_edges, z_P, Gamma_P, T_surface, T_node1, dt):
     '''
     Heat that flows through the face between node 0 and node 1 in one backward Euler solve [J m-2].
 
-    The heat solvers hold node 0 at the surface value, so they do not solve it. The heat through the
-    face 0|1 is then the only heat that the solve gives to the nodes it solves. The value is the face
+    The heat solvers hold the first node of the grid at the surface value, so they do not solve it.
+    The heat through the face between the first and the second node is then the only heat that the
+    solve gives to the nodes it solves. With the ghost node of the darcy scheme (conduction in each
+    sub-step), the first node is the ghost node and the second node is node 0 of the column. The value is the face
     conductance (Patankar 1980, eq. 4.9) times (T_surface - T_node1) times dt, with T_node1 the solved
     temperature of node 1. It is computed from the solved state, not from the change of the energy of
     the column, so that an energy check against it is a check of the solver. Positive: heat into the
@@ -190,9 +192,10 @@ def heatDiff(self, iii, dt=None):
         step self.dt[iii]. The surface value stays self.Tz[0], as the
         caller sets it.
 
-    Sets self.surface_heat_last, the heat through the face between node 0
-    and node 1 in this solve [J m-2] (positive into the column). It is an
-    attribute only and does not change the result.
+    Sets self.surface_heat_last, the heat through the face between the
+    first node (the fixed node) and the second node in this solve [J m-2]
+    (positive into the column). It is an attribute only and does not change
+    the result.
 
     :return: self.Tz (updated temperature profile [K]), self.T10m
         (temperature at 10 m depth [K], or NaN if the firn column is
@@ -318,10 +321,11 @@ def refreezeDiff(self, iii, solver_name='transient_solve_enthalpy', dt=None):
         see individual solver docstrings in solver.py for method-specific
         references.
 
-    Sets self.surface_heat_last, the heat through the face between node 0
-    and node 1 in this solve [J m-2] (positive into the column), from the
-    solved temperature of node 1 before the clamp. It is an attribute only
-    and does not change the result.
+    Sets self.surface_heat_last, the heat through the face between the
+    first node (the fixed node) and the second node in this solve [J m-2]
+    (positive into the column), from the solved temperature of the second
+    node before the clamp. It is an attribute only and does not change the
+    result.
 
     NOTE: several intermediate quantities computed in this function
         (vol_total, mass_total, rho_total, and the commented-out c_vol

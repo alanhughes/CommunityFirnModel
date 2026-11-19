@@ -1698,6 +1698,10 @@ class FirnDensityNoSpin:
             # part or all of the step. Count the time, not a flag: a count stays correct if a later change
             # covers only part of the step. Conduction here runs for the rest only.
             heat_time_rest = self.dt[iii] - self.heat_time_in_scheme
+            if heat_time_rest < -1e-6:
+                raise ValueError(f'The sub-steps of the scheme conducted heat for {self.heat_time_in_scheme} s, '
+                                 f'which is more than the step of {self.dt[iii]} s (iii={iii}).')
+            dml_sum = 0. # the skip branch below does not set it, and the diagnostics read it
             heat_dt = None  # None: the full step, bit for bit as without the key
             skip_conduction = False
             if self.heat_time_in_scheme > 0.:
