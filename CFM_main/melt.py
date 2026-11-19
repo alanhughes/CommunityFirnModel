@@ -1024,10 +1024,18 @@ def _conduct_with_ghost_node(self, iii, dt, T_surface):
 
     Where it sits. The ghost node ends at the top face of node 0 and is so thin that its centre is
     at that face. The conduction distance from the boundary to the centre of node 0 is then half the
-    thickness of node 0 (plus 5e-7 of it). The face conductance is the conductivity of node 0
-    divided by this distance. The ghost node has the density and the conductivity of node 0 and no
-    water. The solver reads the node positions as it does for any grid: z holds the top edge of each
-    node, and the node centre is the middle of its two edges.
+    thickness of node 0 (plus 5e-7 of it). The face conductance is the harmonic mean of the
+    conductivities of the two nodes, weighted by distance (_fv_geometry), divided by this distance.
+    The ghost node has no water. The solver reads the node positions as it does for any grid: z holds
+    the top edge of each node, and the node centre is the middle of its two edges.
+
+    Why the density and the thickness. The ghost node has the density of node 0, so its conductivity
+    is of the same size. A density near zero would give a conductivity near zero. That value would
+    reach the floor of 1e-12 and would dominate the face. The ghost weight in the mean is about 1e-6,
+    so the face conductance equals that of node 0 to about 1e-6. The conductivity of node 0 itself
+    can differ from that of the ghost node (the water term, K_ice(T)). The thickness is 1e-6 of
+    node 0, not 0, because the solvers divide by dz, and a zero thickness would put two node centres
+    at the same place.
 
     Why it exists. Without the ghost node, node 0 is the fixed node. In the sub-steps of the darcy
     scheme node 0 is the old, wet surface node (with the step setting, node 0 is the new dry snow
@@ -1057,7 +1065,7 @@ def _conduct_with_ghost_node(self, iii, dt, T_surface):
     thickness = 1.0e-6 * self.dz[0]                    # thickness of the ghost node [m]
     ghost = {'z': saved['z'][0] - thickness,            # top edge of the ghost node; its bottom edge is z[0]
              'dz': thickness,
-             'rho': saved['rho'][0],                    # same density, so the same conductivity as node 0
+             'rho': saved['rho'][0],                    # density of node 0: keeps the conductivity of the ghost node off the 1e-12 floor
              'mass': saved['rho'][0] * thickness,
              'LWC': 0.,                                 # no water: the ghost node never takes part in a phase change
              'Tz': T_surface}
@@ -1482,7 +1490,9 @@ def darcyscheme(self,iii):
         The interval of the heat conduction. "step" (default): conduction runs once for the whole model
         step, after the scheme (as in the model without the key). "substep": conduction runs once at the
         end of each implicit sub-step, so a night freeze can act on the water of the same day.
-        "substep" needs flow_step_darcy "implicit_gravity". Details:
+        "substep" needs flow_step_darcy "implicit_gravity" and meltwater_solver "enthalpy" or "ncz"
+        (the validator stops other solvers: "ahc" does not count the latent heat of the water that
+        freezes, and "decp" uses internal steps that its surface heat record does not match). Details:
         - The order in a sub-step is melt removal, flow, freezing block, conduction. The flow step and
           the freezing block keep their cold-content rule. Conduction freezes more water when it
           removes heat.
@@ -2037,8 +2047,9 @@ def darcyscheme(self,iii):
         if conduction_in_loop:
             ### Conduction ###
             # The order in a sub-step is flow, freeze, conduction. This is the order of the model
-            # step with conduction_interval_darcy "step" (the scheme, then conduction), so the two
-            # settings differ only in the interval. Both freezing rules stay. The flow step needs
+            # step with conduction_interval_darcy "step" (the scheme, then conduction). The two settings
+            # differ in the interval, and in the boundary: with "step" it is at the centre of the new
+            # snow node, with "substep" at the top face of node 0 (the ghost node). Both freezing rules stay. The flow step needs
             # its cold-content rule: the sweep uses it to stop water in a cold node, and conduction
             # cannot bring back water that has passed a cold node. The two rules do not freeze the
             # same water twice, because each brings a node to balance (dry and cold, or wet at the

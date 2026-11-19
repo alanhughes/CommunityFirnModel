@@ -325,7 +325,11 @@ def refreezeDiff(self, iii, solver_name='transient_solve_enthalpy', dt=None):
     first node (the fixed node) and the second node in this solve [J m-2]
     (positive into the column), from the solved temperature of the second
     node before the clamp. It is an attribute only and does not change the
-    result.
+    result. It is the heat that the solver used only for the solvers with
+    one implicit solve ('enthalpy', 'ncz'). For 'decp' it is not: the solver
+    takes internal steps, and the record uses the final state for the full
+    dt. For 'ahc' the solver does not count the latent heat. The validator
+    stops conduction_interval_darcy "substep" with these two solvers.
 
     NOTE: several intermediate quantities computed in this function
         (vol_total, mass_total, rho_total, and the commented-out c_vol

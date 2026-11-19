@@ -307,8 +307,8 @@ def validate_config(c, config_path=None):
     # Conduction in the sub-steps needs the implicit flow step (the explicit sub-step can be 60 s or less,
     # and thin nodes affect it). The heat solve must be on and driven by the model (not manualT, and
     # heatDiff true). The surface energy balance sets Ts and the melt, and its surface heat term is
-    # not yet reliable, so the key does not run with SEB. The solvers of refreezeDiff are needed,
-    # not the legacy enthalpy solver.
+    # not yet reliable, so the key does not run with SEB. Only the solvers 'enthalpy' and 'ncz' of
+    # refreezeDiff are allowed (see the error text for the reason).
     if c.get('conduction_interval_darcy') == 'substep':
         if c.get('flow_step_darcy', 'explicit') != 'implicit_gravity':
             errors.append("'conduction_interval_darcy' is 'substep', which needs 'flow_step_darcy' to be 'implicit_gravity'")
@@ -318,8 +318,11 @@ def validate_config(c, config_path=None):
             errors.append("'conduction_interval_darcy' is 'substep', which needs 'heatDiff' to be true")
         if c.get('SEB', False):
             errors.append("'conduction_interval_darcy' is 'substep', which does not work with 'SEB' true")
-        if c.get('meltwater_solver') == 'legacy':
-            errors.append("'conduction_interval_darcy' is 'substep', which does not work with 'meltwater_solver' 'legacy'")
+        solver = c.get('meltwater_solver', 'legacy' if 'LWC_heat' in c else 'enthalpy')   # a lone 'LWC_heat' runs as 'legacy'
+        if solver not in ('enthalpy', 'ncz'):
+            errors.append("'conduction_interval_darcy' is 'substep', which needs 'meltwater_solver' to be 'enthalpy' or 'ncz'; "
+                          "got {!r}. 'ahc' does not count the latent heat of the water that freezes. 'decp' uses internal "
+                          "steps, and its surface heat record does not match them. 'legacy' has no ghost node solve.".format(solver))
 
     # 5. Deprecated and unknown keys -> warnings only.
     # claude, 26/09/11: deprecated keys are checked first so they are not

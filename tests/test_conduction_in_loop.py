@@ -12,6 +12,7 @@ import melt
 from cfm_testing import SyntheticColumn
 from config_validation import ConfigValidationError, validate_config
 from constants import CP_I, LF_I, RHO_W_KGM, T_MELT
+from diffusion import firnConductivity
 
 DAY = 86400.
 SUBSTEP = 1800.
@@ -178,6 +179,22 @@ def test_wet_top_node_freezes_only_with_the_heat_that_leaves(solver):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize('dt', [60., 10.])
+def test_the_boundary_is_at_the_top_face_of_node_0(dt):
+    # Dry column, short dt, one call. The heat through the surface is the face conductance times the
+    # temperature difference times dt. The face conductance is K0 / (dz0 / 2): the boundary is at the top
+    # face of node 0. A ghost node as thick as node 0 would put the boundary a full dz0 above its centre,
+    # and the ratio would be 0.5. The measured ratio is 1 to 1e-6 (the ghost weight in the harmonic mean).
+    column = conduction_column(SUBSTEP_KEY, melt_amount=0., surface=253.15, firn=258.15)
+    K0 = firnConductivity(column, 0, 9.828 * np.exp(-0.0057 * column.Tz))[0]
+    dz0 = column.dz[0]
+    froze, surface_heat = melt._conduction_substep(column, 0, dt)
+    expected = K0 / (dz0 / 2.) * (253.15 - column.Tz[0]) * dt
+    assert np.all(froze == 0.)
+    assert surface_heat / expected == pytest.approx(1., abs=1e-4)
+
+
+@pytest.mark.unit
 def test_the_ghost_node_leaves_the_column_arrays_as_they_were():
     column = wet_top_column(SUBSTEP_KEY)
     shapes = {name: getattr(column, name).shape for name in ('z', 'dz', 'rho', 'mass', 'LWC', 'Tz')}
@@ -228,12 +245,15 @@ def test_one_conduction_call_closes_the_energy_with_no_water():
 @pytest.mark.scheme
 @pytest.mark.parametrize('surface, firn', [(253.15, 258.15), (258.15, 263.15), (268.15, 271.15)])
 def test_column_heat_change_is_the_surface_heat(surface, firn):
-    # No melt and no runoff, a wet node 0 at a cold surface, 48 sub-steps: the heat of the column (specific
-    # heat of ice at the node temperature, plus latent) changes by the heat through the face between the ghost
-    # node and node 0. The surface heat comes from the solved state, not from the energy change. The only
-    # difference is the freezing block of the scheme, which uses the specific heat of ice at the node
-    # temperature, and the solver, which uses a constant 2097 J kg-1 K-1. The measured error is 0.04 % to
-    # 0.18 % of the surface heat (0.58 % if the water is one wet node of 0.3 kg m-2). The tolerance is 0.5 %.
+    # A loose physical check in the metric of the model (column_heat integrates the specific heat of ice
+    # at the node temperature). No melt and no runoff, a wet node 0 at a cold surface, 48 sub-steps: the
+    # heat of the column changes by the heat through the face between the ghost node and node 0. The
+    # surface heat comes from the solved state, not from the energy change. The residual comes from the
+    # metric, not from a conservation error: refreezeDiff uses a constant CP_I (2097 J kg-1 K-1) and
+    # heatDiff uses the specific heat at the temperature before the solve. The calls are checked
+    # exactly in the solver metric by the two tests above. In these cases refreezeDiff runs only 1 to 3
+    # times, so this test mostly checks heatDiff. The measured error is 0.04 % to 0.18 % of the surface
+    # heat (0.58 % if the water is one wet node of 0.3 kg m-2). The tolerance is 0.5 %.
     column = wet_top_column(SUBSTEP_KEY, surface=surface, firn=firn)
     heat_before = column_heat(column)
     melt.darcyscheme(column, 0)
@@ -312,7 +332,13 @@ def test_step_setting_is_the_default(short_config):
     ({'conduction_interval_darcy': 'substep', 'heatDiff': True, 'flow_step_darcy': 'implicit_gravity', 'SEB': True},
      "'SEB'"),
     ({'conduction_interval_darcy': 'substep', 'heatDiff': True, 'flow_step_darcy': 'implicit_gravity',
-      'meltwater_solver': 'legacy'}, "'legacy'"),
+      'meltwater_solver': 'legacy'}, "needs 'meltwater_solver'"),
+    ({'conduction_interval_darcy': 'substep', 'heatDiff': True, 'flow_step_darcy': 'implicit_gravity',
+      'meltwater_solver': 'ahc'}, "does not count the latent heat"),
+    ({'conduction_interval_darcy': 'substep', 'heatDiff': True, 'flow_step_darcy': 'implicit_gravity',
+      'meltwater_solver': 'decp'}, "surface heat record"),
+    ({'conduction_interval_darcy': 'substep', 'heatDiff': True, 'flow_step_darcy': 'implicit_gravity',
+      'LWC_heat': 'enthalpy'}, "needs 'meltwater_solver'"),
     ({'conduction_interval_darcy': 'hourly'}, "invalid value 'hourly' for 'conduction_interval_darcy'"),
 ])
 def test_validator_stops_the_run(config, message):
@@ -321,9 +347,12 @@ def test_validator_stops_the_run(config, message):
 
 
 @pytest.mark.unit
-def test_validator_accepts_substep_with_the_implicit_step():
+@pytest.mark.parametrize('solver', [None, 'enthalpy', 'ncz'])
+def test_validator_accepts_substep_with_the_implicit_step(solver):
     # The error list holds only the missing required keys, so no message names the key.
     config = {'conduction_interval_darcy': 'substep', 'flow_step_darcy': 'implicit_gravity', 'heatDiff': True}
+    if solver:
+        config['meltwater_solver'] = solver
     with pytest.raises(ConfigValidationError) as error:
         validate_config(config)
     assert 'conduction_interval_darcy' not in str(error.value)
