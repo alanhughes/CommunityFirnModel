@@ -1089,7 +1089,7 @@ def _conduct_with_ghost_node(self, iii, dt, T_surface):
 ### end _conduct_with_ghost_node ###
 
 
-def _conduction_substep(self, iii, dtsub):
+def _conduction_substep(self, iii, dtsub, imp=None, theta_s=None):
     """
     Heat conduction over one sub-step of the implicit flow step (conduction_interval_darcy "substep").
 
@@ -1101,14 +1101,65 @@ def _conduction_substep(self, iii, dtsub):
     The water that the solve freezes (the night freeze) is the signed difference of the water in
     each node. A signed difference closes the water budget even if a solve makes liquid.
 
-    :return: (refrozen water of each node [m we], heat through the face between the surface and node 0 [J m-2])
+    The limit of the pore space. The solvers do not limit the freezing to the pore space: a node can
+    freeze more water than its pores hold, and its density goes above that of ice. After the solve,
+    the ice that a node froze above its pore space before the solve (the excess) turns back into
+    water. The node loses the mass of the excess, and the latent heat of the excess (excess * LF_I)
+    lowers its temperature, with the constant specific heat of the solvers (CP_I). The heat of the
+    column, with the latent heat of the water counted, does not change. The excess water goes down
+    to the first node below with room, as much as each node takes, with room = dz * theta_s - LWC. It
+    goes to runoff if the node itself is in imp, if an impermeable node comes first, or if it passes
+    the bottom of the column. The energy of the water that moves is its latent heat only, so no heat
+    moves with it. The limit is physical: no node is denser than ice.
+
+    After the call, self.conduction_excess_last is (excess [m we], part of the excess that ran off
+    [m we]). The caller adds the runoff to its runoff total.
+
+    :param imp: indices (or a boolean mask) of the impermeable nodes of the sub-step. None: no node
+    :param theta_s: volumetric water content at saturation of each node, as the flow step reads it.
+        None: the porosity times the density of ice in Mg m-3, less 1e-6
+    :return: (net ice that each node froze [m we]: the water frozen by the solve less the excess,
+        heat through the face between the surface and node 0 [J m-2])
     """
     if self.melt_solver is None:
         raise ValueError('conduction_interval_darcy "substep" needs a meltwater_solver other than "legacy".')
+    ncv = len(self.dz)
     LWC_before = np.copy(self.LWC)
+    pore_ice = RHO_I_MGM * np.maximum(0., (RHO_I - self.rho) / RHO_I) * self.dz * RHO_W_KGM   # ice that fits in the pores before the solve [kg], as refr_pot_v
     surface_heat = _conduct_with_ghost_node(self, iii, dtsub, min(self.Ts[iii], T_MELT))
     self.heat_time_in_scheme = getattr(self, 'heat_time_in_scheme', 0.) + dtsub   # time_evolve() conducts for the rest of the step only
-    return (LWC_before - self.LWC), surface_heat
+    frozen = (LWC_before - self.LWC)                                      # signed water frozen by the solve [m we]
+    excess = np.maximum(0., frozen * RHO_W_KGM - pore_ice) / RHO_W_KGM    # ice above the pore space [m we]
+    excess_total, runoff = 0., 0.   # the excess of all nodes, and the part that runs off [m we]
+    if np.any(excess > 0.):
+        impermeable = np.zeros(ncv, dtype=bool)
+        if imp is not None:
+            impermeable[imp] = True
+        if theta_s is None:
+            theta_s = np.maximum(0., (RHO_I - self.rho) / RHO_I) * RHO_I_MGM - 1e-6
+        for i in np.nonzero(excess > 0.)[0]:
+            water = excess[i]                                            # [m we]
+            ice = water * RHO_W_KGM                                      # [kg]
+            mass_new = self.mass[i] - ice
+            self.Tz[i] = T_MELT + (self.mass[i] * CP_I * (self.Tz[i] - T_MELT) - ice * LF_I) / (mass_new * CP_I)
+            self.mass[i] = mass_new
+            self.rho[i] = mass_new / self.dz[i]
+            remaining = water
+            if impermeable[i]:
+                runoff += remaining
+                remaining = 0.
+            k = i + 1
+            while remaining > 0.:
+                if k >= ncv or impermeable[k]:
+                    runoff += remaining   # an impermeable node, or the bottom of the column
+                    break
+                put = min(remaining, max(0., self.dz[k] * theta_s[k] - self.LWC[k]))
+                self.LWC[k] += put
+                remaining -= put
+                k += 1
+        excess_total = np.sum(excess)
+    self.conduction_excess_last = (excess_total, runoff)
+    return frozen - excess, surface_heat
 ### end _conduction_substep ###
 
 def _melt_schedule(melt_mass_tot, timetot, dtsub, peak_rate, peak_hour):
@@ -1508,6 +1559,13 @@ def darcyscheme(self,iii):
         - The water that conduction freezes is added to refr_tot and to self.refrozen. The fields
           refrozen_flow, refrozen_conduction and surface_heat of self.melt_diagnostics give the parts
           (surface_heat is the heat through the face between the ghost node and node 0 [J m-2]). With "step" the conduction fields are zero.
+        - Conduction cannot freeze more water than the pores of a node hold: no node is denser than
+          ice (see _conduction_substep). The ice above the pore space turns back into water. The water
+          goes down to the first node below with room, or it runs off if an impermeable node comes
+          first. The runoff is in runofftot. self.melt_diagnostics['excess_from_conduction'] is the
+          total [m we] (moved plus runoff), and 'excess_from_conduction_runoff' is the runoff part.
+          The check 'density_above_ice' fails if a node is denser than ice by more than 1e-6 kg m-3
+          after a conduction call (it raises in each sub-step with melt_strict true).
 
     min_partial_node_dz_darcy : float [m]
         Default 0 (off). The melt removal of each sub-step melts the top nodes and leaves one node
@@ -2118,13 +2176,21 @@ def darcyscheme(self,iii):
             # melting point). Conduction freezes more water only when it removes heat (the night
             # freeze). The freeze block above uses cp_i(Tz), and the heat solve uses its own heat
             # capacity, so the two differ by 1 to 2 % in the heat of the freezing.
-            refr_cond_layer, surface_heat_call = _conduction_substep(self, iii, dtsub)
+            refr_cond_layer, surface_heat_call = _conduction_substep(self, iii, dtsub, imp, theta_s)
+            excess_call, excess_runoff_call = self.conduction_excess_last   # the water that the solve froze above the pore space (see _conduction_substep)
+            excess_conduction = excess_conduction + excess_call
+            excess_conduction_runoff = excess_conduction_runoff + excess_runoff_call
+            runofftot  = runofftot + excess_runoff_call
             refr_conduction = refr_conduction + np.sum(refr_cond_layer)
             refr_tot   = refr_tot + np.sum(refr_cond_layer)                 # signed, so that the water budget closes
             refr_layer = refr_layer + refr_cond_layer
             surface_heat = surface_heat + surface_heat_call
             phi  = np.maximum(0, (RHO_I - self.rho) / RHO_I)                # the solve changed rho and Tz: update the state that the next sub-step reads
             cp_i = 152.5 + 7.122 * self.Tz
+            max_density_conduction = max(max_density_conduction, np.max(self.rho))
+            if np.max(self.rho) > RHO_I + 1e-6:
+                density_above_ice = True
+                _record_check(self, 'density_above_ice', False, max_density=max_density_conduction, tolerance=1e-6)   # raises in strict mode
 
         timer = timer + dtsub   # advance the sub-step timer
 
@@ -2171,10 +2237,14 @@ def darcyscheme(self,iii):
     self.melt_diagnostics['runoff']   = runofftot         # [m we]
     self.melt_diagnostics['substeps'] = n_substeps
     self.melt_diagnostics['partial_node_merges'] = partial_node_merges   # partial nodes 0 that merged into the node below
+    self.melt_diagnostics['excess_from_conduction'] = excess_conduction  # [m we] ice that the conduction solve froze above the pore space (moved down plus runoff)
+    self.melt_diagnostics['excess_from_conduction_runoff'] = excess_conduction_runoff   # [m we] part of it that ran off
     if implicit_flow:
         self.melt_diagnostics['root_solves'] = root_solves
         self.melt_diagnostics['idle_substeps'] = idle_substeps
     _record_check(self, 'budget', abs(water_balance_residual) <= 1e-12, residual=water_balance_residual, threshold=1e-12)
+    if conduction_in_loop:
+        _record_check(self, 'density_above_ice', not density_above_ice, max_density=max_density_conduction, tolerance=1e-6)   # no node denser than ice after a conduction call
 
     if np.any(self.Tz > T_MELT):
         print('Max Tz:', np.max(self.Tz))

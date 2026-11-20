@@ -3,7 +3,9 @@ The thin partial node 0 of the darcy scheme with the implicit flow step.
 
 The melt removal of each sub-step leaves one node partly melted (the partial node, the new node 0).
 The key min_partial_node_dz_darcy merges a partial node that is thinner than the key into the node
-below. The tests call darcyscheme on a synthetic column.
+below. The conduction in each sub-step cannot freeze more water than the pores of a node hold: the
+excess turns back into water and goes down, or runs off. The tests call darcyscheme and
+_conduction_substep on a synthetic column.
 '''
 
 import numpy as np
@@ -11,7 +13,7 @@ import pytest
 
 import melt
 from cfm_testing import SyntheticColumn
-from constants import RHO_I, RHO_W_KGM, T_MELT
+from constants import CP_I, LF_I, RHO_I, RHO_W_KGM, T_MELT
 
 DAY = 86400.
 FLOW = {'flow_step_darcy': 'implicit_gravity', 'dtsub_implicit_darcy': DAY, 'RhoImp_darcy': 830,
@@ -125,6 +127,23 @@ def test_a_partial_node_above_the_limit_does_not_merge(monkeypatch):
 
 
 @pytest.mark.scheme
+def test_no_merge_into_the_bottom_node(monkeypatch):
+    # The melt ends in the second node from the bottom. The partial node is thin, but the node below it
+    # is the bottom node, so it does not merge.
+    removal_only(monkeypatch)
+    n = 6
+    rho = np.full(n, 450.0)
+    rho[-1] = 917.0
+    column = SyntheticColumn(n=n, rho_profile=rho, T_profile=263.15, dz=0.05, LWC=0., r2=1.0e-8,
+                             melt=(4 * 22.5 + 22.5 - 0.01) / RHO_I, dt=DAY, steps=1,
+                             config={**FLOW, 'min_partial_node_dz_darcy': 1e-3})
+    melt.darcyscheme(column, 0)
+    assert column.melt_diagnostics['partial_node_merges'] == 0
+    assert len(column.dz) == n
+    assert column.dz[0] == pytest.approx(0.01 / 450., rel=1e-9)
+
+
+@pytest.mark.scheme
 @pytest.mark.parametrize('key', [None, 0, 0.])
 def test_key_at_zero_is_the_same_as_no_key(key, monkeypatch, capsys):
     results = []
@@ -159,3 +178,223 @@ def test_warning_for_substep_with_the_key_at_zero(capsys):
         if expected:
             melt.darcyscheme(column, 0)
             assert 'min_partial_node_dz_darcy is 0' not in capsys.readouterr().out   # printed once in each run
+
+
+### Part C: the pore-space limit of the conduction solve ###
+
+SUBSTEP = 1800.
+SUBSTEP_FLOW = {**FLOW, 'dtsub_implicit_darcy': SUBSTEP, 'conduction_interval_darcy': 'substep'}
+
+
+def heat_column(config=None, dense_rho=900., water=3e-3, melt_amount=0., surface=245.15):
+    '''
+    A column of 60 nodes (5 cm each) at 450 kg m-3, with a dense node 5 at dense_rho and the water
+    `water` [m we] at the melting point. The rest of the column is cold. Node 5 freezes more water
+    than its pores hold.
+    '''
+    n = 60
+    rho = np.full(n, 450.0)
+    rho[5] = dense_rho
+    rho[-3:] = 917.0
+    T = np.full(n, surface)
+    T[5] = T_MELT
+    LWC = np.zeros(n)
+    LWC[5] = water
+    column = SyntheticColumn(n=n, rho_profile=rho, T_profile=T, dz=0.005, LWC=LWC, r2=1.0e-8, melt=melt_amount,
+                             dt=DAY, steps=1, config={**SUBSTEP_FLOW, **(config or {})})
+    column.Ts = np.array([surface])
+    column.melt_solver = 'transient_solve_enthalpy'
+    column.total_count = 0
+    column.T10m = None
+    column.heat_time_in_scheme = 0.
+    return column
+
+
+def solver_heat(column):
+    '''Heat of the column [J m-2] in the metric of the refreezing solvers: constant specific heat of ice, plus latent.'''
+    return np.sum(column.mass * CP_I * (column.Tz - T_MELT)) + np.sum(column.LWC * RHO_W_KGM * LF_I)
+
+
+def total_water_mass(column):
+    return np.sum(column.mass) + np.sum(column.LWC) * RHO_W_KGM   # ice and liquid [kg m-2]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('solver', ['transient_solve_enthalpy', 'transient_solve_ncz'])
+def test_the_solve_alone_freezes_more_than_the_pores_hold(solver):
+    # The fault that the limit corrects: with no limit, the solve takes node 5 above the density of ice.
+    column = heat_column()
+    column.melt_solver = solver
+    melt._conduct_with_ghost_node(column, 0, SUBSTEP, 245.15)
+    assert column.rho[5] > RHO_I + 1.
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('solver', ['transient_solve_enthalpy', 'transient_solve_ncz'])
+def test_the_limit_puts_the_excess_in_the_node_below(solver):
+    column = heat_column()
+    column.melt_solver = solver
+    water_before = np.sum(column.LWC) * RHO_W_KGM
+    LWC_node_6_before = column.LWC[6]
+    mass_before, heat_before = total_water_mass(column), solver_heat(column)
+    froze, surface_heat = melt._conduction_substep(column, 0, SUBSTEP)
+    excess, runoff = column.conduction_excess_last
+    assert np.all(column.rho <= RHO_I + 1e-6)
+    assert column.rho[5] == pytest.approx(RHO_I, abs=1e-6)       # node 5 is full of ice
+    assert excess > 1e-5                                         # the solve froze more than the pores hold
+    assert runoff == 0.
+    room_6 = column.dz[6] * (RHO_I - 450.) / RHO_I * 0.917 - 1e-6 * column.dz[6]   # about 2.3 mm of water; the excess is 2.9 mm
+    assert column.LWC[6] - LWC_node_6_before == pytest.approx(room_6, rel=1e-6)   # the node below takes what it can hold
+    assert np.sum(column.LWC[6:]) - LWC_node_6_before == pytest.approx(excess, rel=1e-9)   # and the next node takes the rest
+    # Budgets: mass of ice plus water is the same, and the net ice that the nodes froze is the water that left
+    assert total_water_mass(column) == pytest.approx(mass_before, rel=1e-12)
+    assert froze.sum() * RHO_W_KGM == pytest.approx(water_before - np.sum(column.LWC) * RHO_W_KGM, rel=1e-9)
+    # The heat: the correction changes no heat of the column (the latent heat of the excess is taken from
+    # node 5). The error of the solve itself (2 J m-2 of 3.4e5, from the solver) is the same with and without it.
+    error = solver_heat(column) - heat_before - surface_heat
+    alone = heat_column()
+    alone.melt_solver = solver
+    heat_alone = solver_heat(alone)
+    surface_heat_alone = melt._conduct_with_ghost_node(alone, 0, SUBSTEP, 245.15)
+    error_alone = solver_heat(alone) - heat_alone - surface_heat_alone
+    assert error == pytest.approx(error_alone, abs=1e-6)
+    assert np.all(column.Tz <= T_MELT)
+
+
+@pytest.mark.unit
+def test_the_excess_is_runoff_if_an_impermeable_node_comes_first():
+    column = heat_column()
+    mass_before = total_water_mass(column)
+    froze, _ = melt._conduction_substep(column, 0, SUBSTEP, imp=np.array([6]))
+    excess, runoff = column.conduction_excess_last
+    assert excess > 1e-5 and runoff == pytest.approx(excess, rel=1e-12)
+    assert column.LWC[6] == 0.
+    assert np.all(column.rho <= RHO_I + 1e-6)
+    # The water budget closes with the runoff: ice and water in the column plus the runoff
+    assert total_water_mass(column) + runoff * RHO_W_KGM == pytest.approx(mass_before, rel=1e-12)
+    assert froze.sum() == pytest.approx(0. - np.sum(column.LWC) - runoff + 3e-3, rel=1e-9)   # frozen net = water lost, less the runoff
+
+
+@pytest.mark.unit
+def test_the_excess_is_runoff_if_the_dense_node_is_impermeable():
+    column = heat_column()
+    melt._conduction_substep(column, 0, SUBSTEP, imp=np.array([5]))
+    excess, runoff = column.conduction_excess_last
+    assert excess > 1e-5 and runoff == pytest.approx(excess, rel=1e-12)
+    assert column.LWC[6] == 0.
+
+
+@pytest.mark.unit
+def test_the_excess_fills_the_room_of_a_node_and_goes_on():
+    column = heat_column()
+    theta_s = np.full(60, 1e-3 / 0.005)                  # room of 1 mm of water in each node
+    theta_s[6] = 0.1e-3 / 0.005                           # node 6 has room for 0.1 mm only
+    melt._conduction_substep(column, 0, SUBSTEP, theta_s=theta_s)
+    excess, runoff = column.conduction_excess_last
+    assert excess > 1.5e-4 and runoff == 0.
+    assert column.LWC[6] == pytest.approx(0.1e-3, rel=1e-9)
+    assert column.LWC[7] == pytest.approx(min(1e-3, excess - 0.1e-3), rel=1e-9)
+
+
+@pytest.mark.unit
+def test_nothing_changes_without_excess():
+    column = heat_column(dense_rho=600., water=1e-5)
+    LWC = column.LWC.copy()
+    melt._conduction_substep(column, 0, SUBSTEP)
+    assert column.conduction_excess_last == (0., 0.)
+    assert column.LWC[6] == 0.
+    assert np.all(column.LWC <= LWC)
+
+
+@pytest.mark.scheme
+def test_the_scheme_counts_the_excess_and_closes_the_water_budget():
+    # One day of 48 sub-steps. Node 5 is in no lens (RhoImp_darcy 830, ThickImp_darcy 0.03: the node is
+    # thinner than the lens limit), so the excess goes down, and the check passes.
+    column = heat_column({'melt_strict': True})
+    melt.darcyscheme(column, 0)
+    d = column.melt_diagnostics
+    assert d['checks']['budget']['ok'] and abs(d['checks']['budget']['residual']) < 1e-12
+    assert d['checks']['density_above_ice']['ok']
+    assert d['excess_from_conduction'] >= d['excess_from_conduction_runoff'] >= 0.
+    assert np.all(column.rho <= RHO_I + 1e-6)
+
+
+@pytest.mark.scheme
+def test_the_scheme_adds_the_runoff_of_the_limit_to_the_runoff_total():
+    # Node 5 and node 6 are ice, so that the excess runs off. RhoImp_darcy is below their density.
+    column = heat_column({'melt_strict': True, 'RhoImp_darcy': 850, 'ThickImp_darcy': 0.})
+    column.rho[6:8] = 880.
+    column.mass[:] = column.rho * column.dz
+    column.rho[5] = 840.
+    column.mass[5] = column.rho[5] * column.dz[5]
+    before = total_water_mass(column)
+    melt.darcyscheme(column, 0)
+    d = column.melt_diagnostics
+    assert d['checks']['budget']['ok'] and abs(d['checks']['budget']['residual']) < 1e-12
+    assert d['runoff'] >= d['excess_from_conduction_runoff'] > 0.
+    assert total_water_mass(column) + d['runoff'] * RHO_W_KGM == pytest.approx(before, rel=1e-12)
+
+
+@pytest.mark.scheme
+def test_the_step_setting_makes_no_excess():
+    column = heat_column({'conduction_interval_darcy': 'step'})
+    melt.darcyscheme(column, 0)
+    d = column.melt_diagnostics
+    assert d['excess_from_conduction'] == 0. and d['excess_from_conduction_runoff'] == 0.
+    assert 'density_above_ice' not in d['checks']
+
+
+### The thin cold node 0 with a steady small input ###
+
+def thin_node_column(config, node0_mass=0.07, melt_mass=0.115, surface=262.5):
+    '''Node 0 holds 0.07 kg m-2 (0.16 mm), and the melt of the day is 0.125 mm of water, in 288 sub-steps of 300 s.'''
+    n = 60
+    dz = np.full(n, 0.05)
+    dz[0] = node0_mass / 450.
+    rho = np.full(n, 450.0)
+    rho[-3:] = 917.0
+    column = SyntheticColumn(n=n, rho_profile=rho, T_profile=np.full(n, surface), dz=dz, LWC=0., r2=1.0e-8,
+                             melt=melt_mass / RHO_I, dt=DAY, steps=1,
+                             config={**FLOW, 'dtsub_implicit_darcy': 300., 'conduction_interval_darcy': 'substep',
+                                     'RhoImp_darcy': 900, 'ThickImp_darcy': 0., 'melt_strict': True, **config})
+    column.Ts = np.array([surface])
+    column.melt_solver = 'transient_solve_enthalpy'
+    column.total_count = 0
+    column.T10m = None
+    column.heat_time_in_scheme = 0.
+    return column
+
+
+def run_with_lens_record(column, monkeypatch):
+    '''Run darcyscheme and return, for each sub-step, whether node 0 is the top of a lens.'''
+    record = []
+    original = melt._implicit_flow_step
+
+    def wrapper(model, liq_input, imptop, *args, **kwargs):
+        record.append(0 in set(np.atleast_1d(imptop)))
+        return original(model, liq_input, imptop, *args, **kwargs)
+    monkeypatch.setattr(melt, '_implicit_flow_step', wrapper)
+    melt.darcyscheme(column, 0)
+    return record
+
+
+@pytest.mark.scheme
+def test_a_thin_cold_node_0_does_not_become_a_lens(monkeypatch, capsys):
+    column = thin_node_column({'min_partial_node_dz_darcy': 1e-3})
+    record = run_with_lens_record(column, monkeypatch)       # melt_strict is true: a density above ice stops the run
+    d = column.melt_diagnostics
+    assert len(record) == 288
+    assert not any(record)                                   # node 0 is never impermeable
+    assert d['partial_node_merges'] == 1
+    assert d['runoff'] == 0.
+    assert d['checks']['density_above_ice']['ok']
+    assert column.dz[0] > 1e-3 and column.rho[0] < 600.
+
+
+@pytest.mark.scheme
+def test_without_the_merge_a_thin_cold_node_0_becomes_a_lens(monkeypatch, capsys):
+    # The fault that the key corrects. The test shows that the one above sees it.
+    column = thin_node_column({'min_partial_node_dz_darcy': 0.})
+    record = run_with_lens_record(column, monkeypatch)
+    assert any(record)
+    assert column.melt_diagnostics['runoff'] > 0.
