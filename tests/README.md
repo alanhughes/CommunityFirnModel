@@ -114,6 +114,11 @@ Both front functions take the cold degrees of the firn ahead of the front. They 
 - The default: a run with the key absent and a run with "step" give identical arrays (`np.array_equal`).
 - The validator stops "substep" with the explicit step, `manualT`, `heatDiff` false, `SEB` true, any `meltwater_solver` other than "enthalpy" or "ncz" ("ahc" does not count the latent heat, "decp" has a surface heat record that does not match its internal steps) and an unknown value. `darcyscheme` stops for an unknown value and for "substep" with the explicit step.
 
+`test_thin_surface_node.py` checks the thin partial node 0 of the `darcy` scheme with the implicit flow step. The tests call `darcyscheme` on a synthetic column of one sub-step of one day, with the flow step switched off, so that the melt removal is the only change.
+
+- The key `min_partial_node_dz_darcy` merges a partial node 0 thinner than the key into the node below. Node 0 is then at least the key thick. Compared with no merge, the column has the same mass, thickness, liquid water and sensible heat, to 1e-12, apart from one more copy of the bottom node. The merged node has the density mass / thickness and the mass-weighted grain size and age.
+- A partial node above the key does not merge. The key at 0 (and no key) gives the same arrays bit for bit. A negative, a text or a boolean key stops the scheme. The scheme warns once if `conduction_interval_darcy` is "substep" and the key is 0.
+
 ## Compare two commits
 
 `compare_commits.py` checks that two commits give the same model results. Run it by hand before you close a change that must keep the results. Put the result in the PR description. Commit your work first, because the script reads commits only.

@@ -989,7 +989,8 @@ _DARCY_DEFAULTS = {
     'capillary_implicit_darcy': 'none', 'capillary_pressure_darcy': 700.,
     'melt_split_darcy': 'uniform', 'melt_peak_rate_darcy': 2.8e-7, 'melt_peak_hour_darcy': 12.,
     'conduction_interval_darcy': 'step',
-}  # the values the scheme used before these options were configurable (snapshot_fraction_darcy, flow_step_darcy, dtsub_implicit_darcy, capillary_implicit_darcy, capillary_pressure_darcy, melt_split_darcy, melt_peak_rate_darcy, melt_peak_hour_darcy and conduction_interval_darcy are new)
+    'min_partial_node_dz_darcy': 0.,   # [m]; 0: off. The melt removal of each sub-step leaves one node partly melted (the partial node, the new node 0). If its thickness is below this value, it merges into the node below.
+}  # the values the scheme used before these options were configurable (snapshot_fraction_darcy, flow_step_darcy, dtsub_implicit_darcy, capillary_implicit_darcy, capillary_pressure_darcy, melt_split_darcy, melt_peak_rate_darcy, melt_peak_hour_darcy, conduction_interval_darcy and min_partial_node_dz_darcy are new)
 _KSAT_LAWS_DARCY = ('Calonne', 'power_law')        # values of Ksat_darcy
 _KREL_LAWS_DARCY = ('vanGenuchten', 'power_law')   # values of krel_darcy
 _FLOW_STEPS_DARCY = ('explicit', 'implicit_gravity')   # values of flow_step_darcy
@@ -1508,6 +1509,22 @@ def darcyscheme(self,iii):
           refrozen_flow, refrozen_conduction and surface_heat of self.melt_diagnostics give the parts
           (surface_heat is the heat through the face between the ghost node and node 0 [J m-2]). With "step" the conduction fields are zero.
 
+    min_partial_node_dz_darcy : float [m]
+        Default 0 (off). The melt removal of each sub-step melts the top nodes and leaves one node
+        partly melted (the partial node, the new node 0). If its thickness is below this value, it
+        merges into the node below. 0 turns the merge off. Reason: with conduction_interval_darcy
+        "substep", a very thin node 0 freezes into a lens at the surface. Details:
+        - The merged node has the sum of the mass, thickness and liquid water of the two nodes, and the
+          density mass / thickness. Its temperature keeps the sensible heat of the two nodes. The grain
+          size, age, mean accumulation rate and Dcon are mass-weighted means. The compaction and the
+          refreezing of the step are sums.
+        - The merge moves no mass, water or heat out of the column. The melt, the surface lowering and
+          the liquid input of the sub-step do not change. The column keeps its number of nodes.
+        - No merge happens if the node below is the bottom node of the column.
+        - self.melt_diagnostics['partial_node_merges'] counts the merges in the call.
+        - If conduction_interval_darcy is "substep" and the key is 0, the scheme prints a warning once.
+        Typical values: 1 mm to 4 mm (about the thickness of new snow).
+
     capillary_pressure_darcy : float [Pa]
         The coefficient c of p_c = c / S. Default 700 (gamma / d_p of Meyer and Hewitt, 2017).
         It is one value for the whole column. It is not linked to Ksat_k0_darcy: if you
@@ -1621,6 +1638,13 @@ def darcyscheme(self,iii):
     if conduction_interval == 'substep' and flow_step != 'implicit_gravity':
         raise ValueError('conduction_interval_darcy "substep" needs flow_step_darcy "implicit_gravity".')
     conduction_in_loop = (conduction_interval == 'substep')   # conduction in each sub-step of the implicit flow step
+    min_partial_node_dz = _darcy_option(self.c, 'min_partial_node_dz_darcy')   # a partial node 0 thinner than this merges into the node below [m]; 0: off
+    if isinstance(min_partial_node_dz, bool) or not isinstance(min_partial_node_dz, (int, float)) or min_partial_node_dz < 0:
+        raise ValueError(f'min_partial_node_dz_darcy is {min_partial_node_dz!r}. It must be a number of 0 m or more.')
+    if conduction_in_loop and min_partial_node_dz == 0 and not getattr(self, 'thin_node_reported', False):
+        self.thin_node_reported = True   # the message is printed once in each run
+        print('conduction_interval_darcy is "substep" and min_partial_node_dz_darcy is 0: a thin node 0 can freeze '
+              'into a lens at the surface (see the key description).')
     implicit_flow = (flow_step == 'implicit_gravity')   # fixed sub-step, implicit gravity flow, no limiting flux
     capillary_head = None   # h_c = c / (rho_w g) of the capillary step [m]; None: no capillary step
     dtsub_fixed = dtsub               # sub-step of the implicit flow step [s]
@@ -1689,6 +1713,11 @@ def darcyscheme(self,iii):
     refr_layer     = np.zeros(ncv)       # per-layer refreezing over the routine [m we] (follows the grid when melt removes nodes)
     refr_conduction = 0.                 # part of refr_tot that froze in the conduction of the sub-steps [m we]
     surface_heat   = 0.                  # heat through the face between the ghost node and node 0, summed over the conduction calls [J m-2]
+    partial_node_merges = 0              # number of partial nodes 0 merged into the node below
+    excess_conduction = 0.               # ice that the conduction solve froze above the pore space and gave back as water [m we]
+    excess_conduction_runoff = 0.        # part of excess_conduction that ran off [m we]
+    density_above_ice = False            # True if a node was denser than ice after a conduction call
+    max_density_conduction = 0.          # largest density after the conduction calls [kg m-3]
     dltz           = np.append(self.dz[0:-1]/2+self.dz[1:]/2,self.dz[-1]/2) # distance between centres of nodes
 
     if self.doublegrid: #if we have doublegrid: need to adjust gridtrack
@@ -1723,6 +1752,39 @@ def darcyscheme(self,iii):
             pm_lwc        = self.LWC[ind1] / self.dz[ind1] * pm_dz  # LWC of partially melted node
             lwc_p         = np.sum(self.LWC[0:ind1 + 1]) - pm_lwc  # LWC of melted firn contributing to percolation
             n_mlt         = ind1 + 1                           # number of nodes melted, including the partial node
+
+            if 0. < min_partial_node_dz and pm_dz < min_partial_node_dz and ind1 + 2 < ncv:
+                # The partial node is thinner than the limit: merge it into the node below (node ind1 + 1).
+                # The merged node takes the place of the partial node in the removal below, so the removal
+                # runs as if the melt had ended in node ind1 + 1 with nothing melted from it. No mass,
+                # water or heat leaves the column, and dh_melt and lwc_p stay as they are.
+                partial_node_merges += 1
+                self.dz, self.rho, self.LWC, self.Tz, self.r2, self.age, self.bdot_mean, self.Dcon, self.compaction = (
+                    np.array(a) for a in (self.dz, self.rho, self.LWC, self.Tz, self.r2, self.age, self.bdot_mean, self.Dcon, self.compaction))   # copies: the merge changes node ind1 + 1 only
+                refr_layer = np.array(refr_layer)
+                j       = ind1 + 1                                 # the node below the partial node
+                mass_j  = self.mass[j]
+                mass_m  = pm_mass + mass_j
+                w0, w1  = pm_mass / mass_m, mass_j / mass_m        # mass weights
+                # Temperature: the sensible heat of ice (the integral of the specific heat of ice, 152.5 + 7.122 T) is kept.
+                # With T in K relative to the melting point, h(T) = 152.5 (T - T_MELT) + 7.122 / 2 (T^2 - T_MELT^2).
+                h_m = w0 * (152.5 * (self.Tz[ind1] - T_MELT) + 7.122 / 2 * (self.Tz[ind1] ** 2 - T_MELT ** 2)) \
+                    + w1 * (152.5 * (self.Tz[j] - T_MELT) + 7.122 / 2 * (self.Tz[j] ** 2 - T_MELT ** 2))   # sensible heat per kg
+                a_q, b_q, c_q = 7.122 / 2, 152.5, -(h_m + 152.5 * T_MELT + 7.122 / 2 * T_MELT ** 2)
+                Tz_m = (-b_q + np.sqrt(b_q ** 2 - 4 * a_q * c_q)) / (2 * a_q)   # root of a T^2 + b T + c = 0 near 250 K
+                self.Tz[j]        = Tz_m
+                for name in ('r2', 'age', 'bdot_mean', 'Dcon'):    # mass-weighted mean
+                    arr = getattr(self, name)
+                    arr[j] = w0 * arr[ind1] + w1 * arr[j]
+                self.compaction[j] = self.compaction[ind1] + self.compaction[j]   # sums
+                refr_layer[j]      = refr_layer[ind1] + refr_layer[j]
+                self.dz[j]  = pm_dz + self.dz[j]
+                self.rho[j] = mass_m / self.dz[j]
+                self.LWC[j] = pm_lwc + self.LWC[j]
+                pm_dz   = self.dz[j]                               # the head of the new column is the merged node
+                pm_lwc  = self.LWC[j]
+                ind1    = j
+                n_mlt   = ind1 + 1
 
             self.dz  = np.concatenate(([pm_dz], self.dz[ind1 + 1:-1], self.dz[-1] * np.ones(n_mlt)))
             self.dzn = np.concatenate((np.zeros(n_mlt), self.dz[1:]))
@@ -2108,6 +2170,7 @@ def darcyscheme(self,iii):
     self.melt_diagnostics['surface_heat'] = surface_heat  # [J m-2]
     self.melt_diagnostics['runoff']   = runofftot         # [m we]
     self.melt_diagnostics['substeps'] = n_substeps
+    self.melt_diagnostics['partial_node_merges'] = partial_node_merges   # partial nodes 0 that merged into the node below
     if implicit_flow:
         self.melt_diagnostics['root_solves'] = root_solves
         self.melt_diagnostics['idle_substeps'] = idle_substeps

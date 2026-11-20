@@ -179,6 +179,7 @@ KNOWN_KEYS = {
     'snapshot_fraction_darcy', 'flow_step_darcy', 'dtsub_implicit_darcy',
     'capillary_implicit_darcy', 'capillary_pressure_darcy',
     'melt_split_darcy', 'melt_peak_rate_darcy', 'melt_peak_hour_darcy', 'conduction_interval_darcy',
+    'min_partial_node_dz_darcy',
     # SEB
     'SEB', 'SEB_TL_thick', 'albedo_factor',
     'SEB_turb_method', 'SEB_roughness_mode', 'SEB_z0m', 'SEB_z0h', 'SEB_z0q',
@@ -302,6 +303,17 @@ def validate_config(c, config_path=None):
         hour = c['melt_peak_hour_darcy']
         if isinstance(hour, bool) or not isinstance(hour, (int, float)) or not 0 <= hour <= 24:
             errors.append("key 'melt_peak_hour_darcy' should be a number from 0 to 24 (hours after the start of the step); got {!r}".format(hour))
+
+    # 3c2. Merge of a thin partial node 0 (melt removal of the darcy scheme).
+    # The melt removal of each sub-step melts the top nodes and leaves one node partly melted (the
+    # partial node, the new node 0). If its thickness [m] is below this value, it merges into the
+    # node below. 0 (default) turns the merge off. Reason: with conduction_interval_darcy 'substep',
+    # a very thin node 0 freezes into a lens at the surface. The scheme warns if the key is 0 and
+    # conduction_interval_darcy is 'substep'.
+    if 'min_partial_node_dz_darcy' in c:
+        dz_min = c['min_partial_node_dz_darcy']
+        if isinstance(dz_min, bool) or not isinstance(dz_min, (int, float)) or not dz_min >= 0:
+            errors.append("key 'min_partial_node_dz_darcy' should be a number of 0 or more (m; 0 is off); got {!r}".format(dz_min))
 
     # 3d. Conduction in each sub-step of the darcy scheme.
     # Conduction in the sub-steps needs the implicit flow step (the explicit sub-step can be 60 s or less,
