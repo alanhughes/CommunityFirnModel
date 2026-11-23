@@ -318,6 +318,9 @@ def edge_column(case, dtsub):
               'dtsub_implicit_darcy': dtsub, **IMPLICIT}
     if case == 'surface_lens':
         rho[0:8] = 917.0
+    if case == 'surface_lens_rain':   # the same lens, with rain only: the melt removal does not take the lens away
+        rho[0:8] = 917.0
+        melt_ = 0.0
     if case == 'lens_at_1':
         rho[1:9] = 917.0
         melt_, rain = 0.0, 0.01
@@ -365,6 +368,40 @@ def test_lens_at_the_surface_sends_the_input_to_runoff():
     column = edge_column('surface_lens', 1800.)
     melt.darcyscheme(column, 0)
     assert column.melt_diagnostics['runoff'] > 0.01
+
+
+@pytest.mark.scheme
+@pytest.mark.parametrize('flow_step', ['implicit_gravity', 'explicit'])
+def test_surface_lid_counts_the_sub_steps_with_a_lens_at_node_0(flow_step):
+    column = edge_column('surface_lens_rain', 1800.)
+    column.c['flow_step_darcy'] = flow_step
+    melt.darcyscheme(column, 0)
+    diagnostics = column.melt_diagnostics
+    assert diagnostics['surface_lid_substeps'] == diagnostics['substeps'] > 0
+    assert diagnostics['surface_lid_runoff'] == pytest.approx(diagnostics['runoff'], abs=1e-12)
+    assert diagnostics['surface_lid_runoff'] == pytest.approx(diagnostics['water_in'], abs=1e-12)   # all the rain of the call leaves
+
+
+@pytest.mark.scheme
+@pytest.mark.parametrize('flow_step', ['implicit_gravity', 'explicit'])
+def test_surface_lid_counts_only_until_the_melt_removes_the_lens(flow_step):
+    column = edge_column('surface_lens', 1800.)   # the melt of the call takes most of the lens away
+    column.c['flow_step_darcy'] = flow_step
+    melt.darcyscheme(column, 0)
+    diagnostics = column.melt_diagnostics
+    assert 0 < diagnostics['surface_lid_substeps'] < diagnostics['substeps']
+    assert 0. < diagnostics['surface_lid_runoff'] <= diagnostics['runoff'] + 1e-12
+
+
+@pytest.mark.scheme
+@pytest.mark.parametrize('flow_step', ['implicit_gravity', 'explicit'])
+@pytest.mark.parametrize('case', ['lens_at_1', 'base', 'dry_no_input'])
+def test_surface_lid_is_zero_without_a_lens_at_node_0(case, flow_step):
+    column = edge_column(case, 1800.)
+    column.c['flow_step_darcy'] = flow_step
+    melt.darcyscheme(column, 0)
+    assert column.melt_diagnostics['surface_lid_substeps'] == 0
+    assert column.melt_diagnostics['surface_lid_runoff'] == 0.
 
 
 ### The scheme: lenses ###

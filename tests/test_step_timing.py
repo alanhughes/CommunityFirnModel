@@ -25,15 +25,20 @@ PARTS = ('pre', 'melt', 'mid', 'heat', 'post')
 
 def _run(short_config, monkeypatch, **overrides):
     calls = {'bucket': 0, 'darcy': 0}
+    recorded = {}   # melt_diagnostics of each darcy step
     for name, function in (('bucket', 'bucket'), ('darcy', 'darcyscheme')):
         def wrapper(model, iii, original=getattr(firn_density_nospin, function), name=name):
             calls[name] += 1
-            return original(model, iii)
+            result = original(model, iii)
+            if name == 'darcy':
+                recorded[iii] = {key: model.melt_diagnostics.get(key) for key in step_timing.DARCY_EXTRA_KEYS}
+            return result
         monkeypatch.setattr(firn_density_nospin, function, wrapper)
     run = short_config(years=2, **overrides)
     model = run.run()
     with h5py.File(run.results_path, 'r') as f:
         results = {name: f[name][:] for name in f.keys()}
+    calls['recorded'] = recorded
     return run, model, results, calls
 
 
@@ -74,9 +79,22 @@ def test_key_on_gives_the_same_results_and_the_rows(short_config, monkeypatch, c
             assert row['root_solves'] == '' and row['idle_substeps'] == ''
         if row['scheme'] in ('darcy', 'bucket'):
             assert row['budget_residual'] != ''
+        new_columns = ('refrozen_conduction_mwe', 'surface_heat_Jm2', 'surface_lid_substeps', 'surface_lid_runoff_mwe')
+        if row['scheme'] == 'darcy':
+            values = calls['recorded'][int(row['step'])]
+            assert float(row['refrozen_conduction_mwe']) == pytest.approx(values['refrozen_conduction'], rel=1e-8, abs=1e-15)
+            assert float(row['surface_heat_Jm2']) == pytest.approx(values['surface_heat'], rel=1e-8, abs=1e-12)
+            assert int(row['surface_lid_substeps']) == values['surface_lid_substeps']
+            assert float(row['surface_lid_runoff_mwe']) == pytest.approx(values['surface_lid_runoff'], rel=1e-8, abs=1e-15)
+        else:
+            assert all(row[name] == '' for name in new_columns)
         if row['scheme'] == 'bucket':
             assert row['substeps'] == ''
     assert sum(int(row['substeps']) for row in rows if row['scheme'] == 'darcy') > 0
+
+    # the four new columns follow idle_substeps
+    header = list(rows[0].keys())
+    assert header[header.index('idle_substeps') + 1:] == ['refrozen_conduction_mwe', 'surface_heat_Jm2', 'surface_lid_substeps', 'surface_lid_runoff_mwe']
 
     # one line for each model year, and the wall time of a year is the sum of its rows
     lines = [line for line in printed.splitlines() if ' step_timing year ' in line]
@@ -176,6 +194,28 @@ def test_part_year_label_comes_from_the_number_of_steps(tmp_path, capsys):
     assert len(lines) == 2
     assert 'year 1980:' in lines[0] and 'steps 12 ' in lines[0]
     assert 'year 1981 (part year):' in lines[1] and 'steps 6 ' in lines[1]
+
+
+def test_darcy_extra_columns_take_their_own_fields(tmp_path):
+    # Four different values, so a swap of two columns fails.
+    model = SimpleNamespace(c={'resultsFolder': str(tmp_path)}, modeltime=np.array([1980.5]), MELT=True,
+                            snowmeltSec=np.zeros(1), rainSec=np.zeros(1), dz=np.ones(5), LWC=np.zeros(5),
+                            melt_diagnostics={'scheme': 'darcy', 'step': 0, 'checks': {},
+                                              'refrozen_conduction': 1.5e-3, 'surface_heat': 2.5e5,
+                                              'surface_lid_substeps': 7, 'surface_lid_runoff': 4.5e-4})
+    timer = step_timing.StepTimer(model, 1.)
+    timer.begin(0)
+    for part in PARTS[:-1]:
+        timer.mark(part)
+    timer.end_step(0)
+    timer.finish()
+    with open(tmp_path / step_timing.CSV_NAME, newline='') as f:
+        row = next(csv.DictReader(f))
+    assert row['scheme'] == 'darcy'
+    assert float(row['refrozen_conduction_mwe']) == 1.5e-3
+    assert float(row['surface_heat_Jm2']) == 2.5e5
+    assert row['surface_lid_substeps'] == '7'
+    assert float(row['surface_lid_runoff_mwe']) == 4.5e-4
 
 
 @pytest.mark.conservation
