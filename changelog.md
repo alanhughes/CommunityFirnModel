@@ -61,6 +61,22 @@ https://communityfirnmodel.readthedocs.io/en/latest/
 	- Vapor-phase transport (vapor.py) is experimental (beta): off by default, not validated against data (see the 4.2.0 entry and docs/extras/vapor.rst)
 	- Mars: what is still missing for the Arthern et al. (2000) densification is listed in mars_todo.md
 
+## [Unreleased]
+### New
+- *melt.py, config_validation.py, example.json, example_df.json, example_csv.json, example.toml, run_CFM_example_notebook.ipynb* Added the config key `theta_s_factor_darcy` (default 0.917): the fraction of the porosity that water can fill at saturation in the Darcy scheme. Existing configurations give the same results. The example configs and the notebook now list all the Darcy keys.
+- *config_validation.py* The validator prints a warning when `MELT` and `keep_firnthickness` are true and `liquid` is `darcy`, `resingledomain` or `prefsnowpack`. The melt removal of these schemes ignores the key.
+- *firn_density_nospin.py, config_validation.py, example.json, example_df.json, example_csv.json, example.toml, run_CFM_example_notebook.ipynb* Added the config key `bucket_until_year` (default 1980; `null` means no switch). It sets the model year at which the `darcy`, `prefsnowpack` and `resingledomain` options stop using the bucket scheme, in place of a fixed 1980. A run that uses bucket because of this key prints one message at the start.
+- *tests/test_darcy_front_speed.py* Added a test of the darcy wetting front against the oracle, with the same flux law. Thin nodes at the default `dtmin_darcy` are expected failures, and *docs/extras/melt_checks.rst* gives the node thicknesses.
+
+### Bug fixes
+- *melt.py* The Darcy scheme stopped with an `IndexError` when the liquid water input in a sub-step was more than the remaining capacity of the column, for example on an impermeable column or on saturated firn over ice. The excess now runs off.
+- *melt.py* The melt removal of the Darcy scheme now shifts `Dcon` and `bdot_mean` with the other per-node arrays. This changes only the `Dcon` output. The regridding of doublegrid does not update `Dcon`, so with doublegrid the labels still do not follow the layers.
+- *melt.py, sublim.py* Melt removal in the Darcy scheme and sublimation set the `refrozen` value of the bottom node to zero, although that node stays in the column. It now keeps its value. This changes only the `refrozen` output, and only if the bottom node refreezes water.
+- *physics.py* **`Li2015` runs with `bdot_type` `instant`.** The `instant` branch set `beta1a` and `beta2a` but read `beta1` and `beta2`, so the model stopped with an `UnboundLocalError`. It now reads `beta1a` and `beta2a`. Results with `mean` do not change.
+- *physics.py* **`HLSigfus`: a node at exactly 550 kg m-3 has a rate.** No zone mask included this density, so the rate of the node was zero. The node now uses the transition equation. Results change only for a node at exactly this density.
+- *melt.py* **`bucket` and `darcy`: melt of several nodes conserves liquid water.** When melt removed `n` nodes, the `n` new nodes at the bottom of the column each copied the liquid water of the bottom node, so the column gained `n - 1` times that water. The new nodes now hold no liquid water, and the bottom node keeps its water once. Results change only when the bottom node holds liquid water and melt removes more than one node.
+- *physics.py* **A rate of 0 at zero instant accumulation.** With `bdot_type` `instant` and no accumulation in a time step, `Ligtenberg2011`, `KuipersMunneke2015`, `Brils2022`, `Veldhuijsen2023` and `Simonsen2013` gave a NaN rate, from ln(0) or 1/sqrt(0) multiplied by 0. They now give 0, which is the limit of the equations. Results change only for those time steps.
+
 ## [4.2.0] 2026-11-18
 ### Notes
 - Four groups of changes since 4.1.0: seeded random draws (`random_seed`), repeating a run from its results folder (the forcing file), an albedo module (with two parameterizations from the literature and an `albedo` output), and **experimental** vapor transport in the pore space. All of them leave the results of existing configurations unchanged, with two exceptions listed under *Changes that alter results*. With the new keys at their defaults (`vaporTransport` false, `albedo_method` `prescribed`) the model results are bit-for-bit identical to 4.1.0 (checked for a plain run, a melt run with `isoDiff`, the isotope diffusion itself, and every result dataset of the SEB examples).
@@ -84,22 +100,6 @@ https://communityfirnmodel.readthedocs.io/en/latest/
 ### Known issues (found while doing the above, not fixed)
 - *merge.py* After it removes thin layers, `merge.py` pads the bottom of the column with copies of the bottom node, which adds mass at the bottom and deepens the domain. With the default `merge_min` (1e-9 m) the merge never fires (0 calls in the 108,682 and 244,586 daily steps of the DYE-2 and Summit runs), so no run at the default is affected; with `merge_min` of 1 mm or more the whole-domain firn air content (`DIP` column 1) changes by several percent (Summit +9%, mostly the padding); use column 7 (FAC to `DIPhorizon`).
 - *RCMpkl_to_spin.py* `makeSpinFiles(..., SEB=False, calc_melt=True)` fails at line 484 ("setting an array element with a sequence") with the DYE-2 dataframe (also in 4.1.0).
-
-## [Unreleased]
-### New
-- *melt.py, config_validation.py, example.json, example_df.json, example_csv.json, example.toml, run_CFM_example_notebook.ipynb* Added the config key `theta_s_factor_darcy` (default 0.917): the fraction of the porosity that water can fill at saturation in the Darcy scheme. Existing configurations give the same results. The example configs and the notebook now list all the Darcy keys.
-- *config_validation.py* The validator prints a warning when `MELT` and `keep_firnthickness` are true and `liquid` is `darcy`, `resingledomain` or `prefsnowpack`. The melt removal of these schemes ignores the key.
-- *firn_density_nospin.py, config_validation.py, example.json, example_df.json, example_csv.json, example.toml, run_CFM_example_notebook.ipynb* Added the config key `bucket_until_year` (default 1980; `null` means no switch). It sets the model year at which the `darcy`, `prefsnowpack` and `resingledomain` options stop using the bucket scheme, in place of a fixed 1980. A run that uses bucket because of this key prints one message at the start.
-- *tests/test_darcy_front_speed.py* Added a test of the darcy wetting front against the oracle, with the same flux law. Thin nodes at the default `dtmin_darcy` are expected failures, and *docs/extras/melt_checks.rst* gives the node thicknesses.
-
-### Bug fixes
-- *melt.py* The Darcy scheme stopped with an `IndexError` when the liquid water input in a sub-step was more than the remaining capacity of the column, for example on an impermeable column or on saturated firn over ice. The excess now runs off.
-- *melt.py* The melt removal of the Darcy scheme now shifts `Dcon` and `bdot_mean` with the other per-node arrays. This changes only the `Dcon` output. The regridding of doublegrid does not update `Dcon`, so with doublegrid the labels still do not follow the layers.
-- *melt.py, sublim.py* Melt removal in the Darcy scheme and sublimation set the `refrozen` value of the bottom node to zero, although that node stays in the column. It now keeps its value. This changes only the `refrozen` output, and only if the bottom node refreezes water.
-- *physics.py* **`Li2015` runs with `bdot_type` `instant`.** The `instant` branch set `beta1a` and `beta2a` but read `beta1` and `beta2`, so the model stopped with an `UnboundLocalError`. It now reads `beta1a` and `beta2a`. Results with `mean` do not change.
-- *physics.py* **`HLSigfus`: a node at exactly 550 kg m-3 has a rate.** No zone mask included this density, so the rate of the node was zero. The node now uses the transition equation. Results change only for a node at exactly this density.
-- *melt.py* **`bucket` and `darcy`: melt of several nodes conserves liquid water.** When melt removed `n` nodes, the `n` new nodes at the bottom of the column each copied the liquid water of the bottom node, so the column gained `n - 1` times that water. The new nodes now hold no liquid water, and the bottom node keeps its water once. Results change only when the bottom node holds liquid water and melt removes more than one node.
-- *physics.py* **A rate of 0 at zero instant accumulation.** With `bdot_type` `instant` and no accumulation in a time step, `Ligtenberg2011`, `KuipersMunneke2015`, `Brils2022`, `Veldhuijsen2023` and `Simonsen2013` gave a NaN rate, from ln(0) or 1/sqrt(0) multiplied by 0. They now give 0, which is the limit of the equations. Results change only for those time steps.
 
 ## [4.1.0] 2026-11-03
 ### New
