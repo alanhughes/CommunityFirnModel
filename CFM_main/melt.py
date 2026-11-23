@@ -527,7 +527,7 @@ def bucket(self, iii):
         else:
             self.dzn        = self.dz[0:self.compboxes]  # avoids bug from undefined self.dzn
 
-        self.LWC = np.concatenate(([pm_lwc], self.LWC[i_surf_new + 1:-1], self.LWC[-1] * np.ones(n_melted)))
+        self.LWC = np.concatenate(([pm_lwc], self.LWC[i_surf_new + 1:], np.zeros(n_melted - 1)))
 
         
         if keep_firnthickness:
@@ -1211,7 +1211,7 @@ def darcyscheme(self,iii):
             phi      = np.maximum(0, phi)                      # avoid numerical errors from very small negative phi
             self.mass = self.dz * self.rho
             self.age  = np.append(self.age[ind1:-1], self.age[-1] * np.ones(n_mlt))
-            self.LWC  = np.concatenate(([pm_lwc], self.LWC[ind1 + 1:-1], self.LWC[-1] * np.ones(n_mlt)))
+            self.LWC  = np.concatenate(([pm_lwc], self.LWC[ind1 + 1:], np.zeros(n_mlt - 1)))
             self.compaction = np.concatenate((self.compaction[ind1:-1], np.zeros(n_mlt)))
             refr_layer = np.concatenate((refr_layer[ind1:-1], np.zeros(n_mlt)))
             self.Tz   = np.append(self.Tz[ind1:-1], self.Tz[-1] * np.ones(n_mlt))

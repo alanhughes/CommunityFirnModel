@@ -88,3 +88,22 @@ def test_darcy_uses_bisection_when_the_first_guess_is_far_from_equilibrium(darcy
     for call in calls:
         expected = 'flux_bisection' if abs(call['f_eq']) > 1.0 else 'flux_newtonraphson'
         assert call['solver'] == expected, call
+
+
+@pytest.mark.scheme
+@pytest.mark.parametrize('scheme', ['bucket', 'darcyscheme'])
+def test_melt_of_several_nodes_does_not_copy_the_bottom_water(synthetic_column, scheme):
+    # Melt removes several nodes at the top, and the scheme adds the same number of
+    # nodes at the bottom. The new nodes are dry: the water of the wet bottom node
+    # is in the column once, so water in = water left + refrozen + runoff.
+    lwc = np.zeros(60)
+    lwc[-1] = 1.4e-4
+    column = synthetic_column(n=60, rho_profile=400.0, T_profile=273.15, dz=0.05, LWC=lwc,
+                              r2=(5e-4) ** 2, melt=0.03, dt=86400.0,
+                              config=dict(Ponding=False, DirectRunoff=0.0, RunoffZuoOerlemans=False, Slope=0.0))
+    getattr(melt, scheme)(column, 0)
+    budget = column.melt_diagnostics
+    assert budget['lwc_end'] + budget['refrozen'] + budget['runoff'] == pytest.approx(budget['water_in'], abs=1e-12)
+    # The bottom water is below the irreducible content, so it does not move, and the
+    # node added last at the bottom stays dry.
+    assert column.LWC[-1] == 0.0
