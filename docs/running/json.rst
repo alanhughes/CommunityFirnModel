@@ -535,7 +535,7 @@ meltwater_solver
   - ``ncz`` -- Newton-based scheme (Jordan-style).
   - ``legacy`` -- the enthalpy solver as it stood before mid-July 2026, retained to reproduce older results. Provided for backward comparison only; use one of the schemes above for new work.
 
-  If the key is omitted, the model defaults to ``enthalpy``. For the four current schemes, refreezing is dispatched through ``refreezeDiff`` in ``diffusion.py``, which calls the corresponding ``transient_solve_*`` function in ``solver.py``; ``legacy`` instead calls ``enthalpyDiff_old`` (``diffusion.py``) and ``transient_solve_EN_old`` (``solver.py``), bypassing ``refreezeDiff``. Per-time-step solver diagnostics are written to ``diagnostics_<solver>.csv`` at the end of the run. See :doc:`../extras/meltwater_solver` for guidance on which scheme to choose.
+  If the key is omitted, the model defaults to ``enthalpy``. For the four current schemes, refreezing is dispatched through ``refreezeDiff`` in ``diffusion.py``, which calls the corresponding ``transient_solve_*`` function in ``solver.py``; ``legacy`` instead calls ``enthalpyDiff_old`` (``diffusion.py``) and ``transient_solve_EN_old`` (``solver.py``), bypassing ``refreezeDiff``. Per-time-step solver diagnostics are written to ``diagnostics_<solver>.csv`` at the end of the run (see :ref:`solver-diagnostics`). See :doc:`../extras/meltwater_solver` for guidance on which scheme to choose.
 
   This key replaces the former **LWC_heat**, which selected the same thing and has been removed.
 
