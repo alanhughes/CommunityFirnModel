@@ -243,9 +243,13 @@ def test_the_limit_puts_the_excess_in_the_node_below(solver):
     assert column.rho[5] == pytest.approx(RHO_I, abs=1e-6)       # node 5 is full of ice
     assert excess > 1e-5                                         # the solve froze more than the pores hold
     assert runoff == 0.
-    room_6 = column.dz[6] * (RHO_I - 450.) / RHO_I * 0.917 - 1e-6 * column.dz[6]   # about 2.3 mm of water; the excess is 2.9 mm
+    # Node 6 is cold after the solve: it freezes some of the water (its cold content), then stores water in the room that is left
+    assert column.Tz[6] == T_MELT and column.rho[6] > 450. + 1.
+    room_6 = column.dz[6] * ((RHO_I - column.rho[6]) / RHO_I * 0.917 - 1e-6)   # room after the freezing
     assert column.LWC[6] - LWC_node_6_before == pytest.approx(room_6, rel=1e-6)   # the node below takes what it can hold
-    assert np.sum(column.LWC[6:]) - LWC_node_6_before == pytest.approx(excess, rel=1e-9)   # and the next node takes the rest
+    refrozen = column.conduction_excess_refrozen_last
+    assert refrozen > 1e-5
+    assert np.sum(column.LWC[6:]) - LWC_node_6_before + refrozen == pytest.approx(excess, rel=1e-9)   # and the next node takes the rest
     # Budgets: mass of ice plus water is the same, and the net ice that the nodes froze is the water that left
     assert total_water_mass(column) == pytest.approx(mass_before, rel=1e-12)
     assert froze.sum() * RHO_W_KGM == pytest.approx(water_before - np.sum(column.LWC) * RHO_W_KGM, rel=1e-9)
@@ -359,8 +363,83 @@ def test_theta_s_above_the_true_pores_does_not_give_a_node_more_room():
     melt._conduction_substep(column, 0, SUBSTEP, theta_s=theta_s)
     excess, runoff = column.conduction_excess_last
     assert excess > 1e-5
-    assert column.LWC[6] == pytest.approx(column.dz[6] * ((RHO_I - 800.) / RHO_I * 0.917 - 1e-6), rel=1e-9)
+    assert column.LWC[6] == pytest.approx(column.dz[6] * ((RHO_I - column.rho[6]) / RHO_I * 0.917 - 1e-6), rel=1e-9)   # the true pores, after the node froze some water
     assert column.LWC[7] > 0.                                     # the rest goes on
+    assert total_water_mass(column) + runoff * RHO_W_KGM == pytest.approx(mass_before, rel=1e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('solver', ['transient_solve_enthalpy', 'transient_solve_ncz'])
+def test_the_moved_water_freezes_in_the_cold_nodes_below(solver):
+    column = heat_column()
+    column.melt_solver = solver
+    LWC_before = np.copy(column.LWC)
+    mass_before = total_water_mass(column)
+    froze, surface_heat = melt._conduction_substep(column, 0, SUBSTEP)
+    excess, runoff = column.conduction_excess_last
+    refrozen = column.conduction_excess_refrozen_last
+    cold = column.Tz < T_MELT
+    assert refrozen > 1e-5 and runoff == 0.
+    assert np.all(column.LWC[cold] <= LWC_before[cold])            # no cold node got liquid water
+    assert np.all(column.rho <= RHO_I + 1e-6)
+    gained = column.mass - heat_column().mass                      # ice that each node gained
+    assert gained[6] > 0. and np.sum(gained[6:]) / RHO_W_KGM == pytest.approx(refrozen, rel=1e-9)
+    assert gained[6] * LF_I <= column.mass[6] * CP_I * (T_MELT - 245.) * 1.5   # of the order of the cold content: not more than the node holds
+    assert total_water_mass(column) + runoff * RHO_W_KGM == pytest.approx(mass_before, rel=1e-12)
+    # The returned per-node value holds the ice of the freezing below: ice and water close at 1e-12
+    assert froze.sum() == pytest.approx(np.sum(LWC_before) - np.sum(column.LWC) - runoff, rel=1e-9, abs=1e-15)
+    # The heat in the metric of the solvers: only the error of the solve (the same as for the solve alone)
+    alone = heat_column()
+    alone.melt_solver = solver
+    heat_alone = solver_heat(alone)
+    surface_heat_alone = melt._conduct_with_ghost_node(alone, 0, SUBSTEP, 245.15)
+    error_alone = solver_heat(alone) - heat_alone - surface_heat_alone
+    reference = heat_column()
+    reference.melt_solver = solver
+    heat_before = solver_heat(reference)
+    assert solver_heat(column) - heat_before - surface_heat == pytest.approx(error_alone, abs=1e-6)
+
+
+@pytest.mark.unit
+def test_a_small_excess_freezes_wholly_in_the_node_below():
+    # The excess (0.1 mm) is less than the cold content of node 6: it all freezes there, none is liquid.
+    column = heat_column(water=2e-4)
+    mass_before = total_water_mass(column)
+    melt._conduction_substep(column, 0, SUBSTEP)
+    excess, runoff = column.conduction_excess_last
+    assert 5e-5 < excess < 2e-4 and runoff == 0.
+    assert column.conduction_excess_refrozen_last == pytest.approx(excess, rel=1e-12)
+    assert np.sum(column.LWC) == 0. and column.Tz[6] < T_MELT
+    assert total_water_mass(column) == pytest.approx(mass_before, rel=1e-12)
+
+
+@pytest.mark.unit
+def test_a_cold_node_with_no_pore_space_and_no_room_lets_the_water_pass():
+    # Nodes 6 and 7 are cold and have no pore space for ice (they are at 917 kg m-3 before the call).
+    # The water passes them and is stored below. The water that does not freeze and cannot be stored runs off at the bottom.
+    column = heat_column()
+    for k in (6, 7):
+        column.rho[k] = RHO_I
+        column.mass[k] = RHO_I * column.dz[k]
+    mass_before = total_water_mass(column)
+    mass_6_before, mass_7_before = column.mass[6], column.mass[7]
+    froze, _ = melt._conduction_substep(column, 0, SUBSTEP)
+    excess, runoff = column.conduction_excess_last
+    assert excess > 1e-5 and runoff == 0.
+    assert column.LWC[6] == 0. and column.LWC[7] == 0.
+    assert column.mass[6] == mass_6_before and column.mass[7] == mass_7_before
+    cold = column.Tz < T_MELT
+    assert np.all(column.LWC[cold] == 0.)
+    assert np.sum(column.LWC[8:]) + column.conduction_excess_refrozen_last == pytest.approx(excess, rel=1e-9)
+    assert total_water_mass(column) + runoff * RHO_W_KGM == pytest.approx(mass_before, rel=1e-12)
+    # Every node below is ice: the water is runoff at the bottom
+    column = heat_column()
+    column.rho[6:] = RHO_I
+    column.mass[:] = column.rho * column.dz
+    mass_before = total_water_mass(column)
+    melt._conduction_substep(column, 0, SUBSTEP)
+    excess, runoff = column.conduction_excess_last
+    assert runoff == pytest.approx(excess, rel=1e-12) and np.sum(column.LWC) == 0.
     assert total_water_mass(column) + runoff * RHO_W_KGM == pytest.approx(mass_before, rel=1e-12)
 
 
@@ -401,6 +480,26 @@ def test_the_scheme_adds_the_runoff_of_the_limit_to_the_runoff_total():
     assert d['checks']['budget']['ok'] and abs(d['checks']['budget']['residual']) < 1e-12
     assert d['runoff'] >= d['excess_from_conduction_runoff'] > 0.
     assert total_water_mass(column) + d['runoff'] * RHO_W_KGM == pytest.approx(before, rel=1e-12)
+
+
+@pytest.mark.scheme
+def test_the_excess_of_the_last_sub_step_leaves_no_water_in_a_cold_node(monkeypatch):
+    # One sub-step of one day: the excess of the conduction comes in the last (and only) sub-step.
+    # The flow step is off, so the water stays in node 5 until the conduction (the real flow moves it down
+    # and the freezing block freezes it before the conduction). The node below is cold, so the check of the
+    # cold layers needs the water to freeze at once.
+    removal_only(monkeypatch)
+    column = heat_column({'melt_strict': True, 'dtsub_implicit_darcy': DAY})
+    melt.darcyscheme(column, 0)
+    d = column.melt_diagnostics
+    assert d['substeps'] == 1
+    assert d['excess_from_conduction'] > 1e-5
+    assert d['excess_refrozen_below'] > 1e-5
+    assert d['checks']['cold']['ok'] and d['checks']['budget']['ok']
+    assert abs(d['checks']['budget']['residual']) < 1e-12
+    assert d['checks']['density_above_ice']['ok']
+    assert not np.any((column.Tz < T_MELT) & (column.LWC > 0.))
+    assert d['refrozen'] >= d['excess_refrozen_below']
 
 
 @pytest.mark.scheme
