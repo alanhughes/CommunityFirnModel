@@ -11,7 +11,7 @@ Distributed under terms of the MIT license.
 
 from diffusion import *
 import solver
-from config_loader import load_config
+from config_loader import load_config, get_rng
 from reader import read_input
 from reader import read_init
 from writer import write_spin_hdf5
@@ -56,6 +56,7 @@ from re_snowpack import resingledomain #VV
 from prefflow_snowpack import prefflow #VV
 from sublim import sublim #VV
 from ModelOutputs import ModelOutputs, DARCY_SNAPSHOT_OUTPUTS
+from vapor import vapor_mass_flux_divergence
 
 class FirnDensityNoSpin:
     '''
@@ -147,7 +148,7 @@ class FirnDensityNoSpin:
             if 'forcing_data_start' not in climateTS.keys():
                 climateTS['forcing_data_start'] = climateTS['time'][0]
             self.forcing_data_start = climateTS['forcing_data_start']
-            forcing_writer(self,climateTS, SEBfluxes)
+            forcing_writer(self,climateTS, SEBfluxes, strain_rates)
         else:
             self.forcing_data_start = None
 
@@ -765,7 +766,7 @@ class FirnDensityNoSpin:
 
             elif self.c['srho_type']=='noise':
                 rho_stdv        = 25 # the standard deviation of the surface density (I made up 25)
-                self.rhos0      = np.random.normal(self.c['rhos0'], rho_stdv, self.stp)
+                self.rhos0      = get_rng(self.c, 'srho').normal(self.c['rhos0'], rho_stdv, self.stp)
                 self.rhos0[self.rhos0>450]=450
                 self.rhos0[self.rhos0<250]=250
 
@@ -920,6 +921,16 @@ class FirnDensityNoSpin:
             print(f"snow model is {self.c['snow_model']}")
         else:
             pass
+
+        if "vaporTransport" not in self.c:
+            self.c["vaporTransport"] = False
+        if self.c["vaporTransport"] and self.c['isoDiff']:
+            print('\n' + '*'*78)
+            print('WARNING: ISOTOPE DIFFUSION DOES NOT CURRENTLY INCLUDE VAPOR TRANSPORT.')
+            print('  The mass that the vapor transport (vaporTransport) moves between layers carries no isotopic')
+            print('  composition: the isotope profiles are not changed by it. The isotope diffusion itself uses the')
+            print('  same diffusivity and tortuosity as the vapor transport.')
+            print('*'*78 + '\n')
 
         ### Isotopes ########
         if self.c['isoDiff']:
@@ -1086,6 +1097,15 @@ class FirnDensityNoSpin:
         
         if ((not self.MELT) and ('LWC' in self.output_list)):
             self.output_list.remove('LWC')
+        if self.c['SEB']: # the albedo of the surface energy balance (prescribed or calculated) is always an output
+            if 'albedo' not in self.output_list:
+                self.output_list.append('albedo')
+                print('Added albedo to model output list.')
+        elif 'albedo' in self.output_list:
+            self.output_list.remove('albedo')
+            print('Removed albedo from the model output list: it is an output of the surface energy balance (SEB is false).')
+        self.albedo = np.nan # albedo of the surface energy balance at the output time (the value at the start of the run is not calculated)
+
         ### 'darcy_snapshot': the state partway through each darcy step (see darcyscheme)
         self.darcy_snapshot = False
         if 'darcy_snapshot' in self.output_list:
@@ -1314,6 +1334,11 @@ class FirnDensityNoSpin:
                 RD_snow = getattr(FirnPhysics(PhysParams),'Yamazaki1993')()
                 drho_dt[self.rho<300] = get_drho_dt(RD_snow, self.rho)[self.rho<300]
 
+            ### Two different ways in which the density of a layer changes:
+            ###  - densification (drho_dt): the mass is fixed and the volume changes (the layer gets thinner);
+            ###  - a mass change (here vapor transport, dmass_dt_vapor [kg m-2 s-1]): the volume is fixed and the mass changes
+            ###    (vapor fills or empties the pores), so dz stays and rho changes. It is calculated and applied after dz is recalculated below.
+
             if self.c['no_densification']:
                 drho_dt = np.zeros_like(drho_dt)
             self.viscosity = RD['viscosity']
@@ -1350,6 +1375,15 @@ class FirnDensityNoSpin:
             self.dsdz_step = dsdz        # densification + horizontal-strain thickness change this step
             self.dsdz_strain = sdz_new - np.sum(dz_dens) # the horizontal-strain part of it
             self.dsdz_comp = self.dsdz_step - self.dsdz_strain # the densification part of it (negative when the column gets thinner)
+            ### vapor transport: a mass change at fixed volume (dz does not change, so the thickness diagnostics above are not affected)
+            if self.c['vaporTransport'] and not self.c['no_densification']: # no_densification freezes the mass too
+                dmass_dt_vapor, n_limited = vapor_mass_flux_divergence(self, self.dt[iii]) # temperature of the last step, density and volume as updated above
+                if n_limited > 0 and not getattr(self, '_vapor_limit_noted', False):
+                    print(f'NOTE: vapor transport was limited in {n_limited} layers at step {iii} (no layer loses more than half its mass or fills more than half its free pore space in a step); it is printed once.')
+                    self._vapor_limit_noted = True
+                self.mass = self.mass + self.dt[iii] * dmass_dt_vapor
+                full = self.dz > 0 # layers with no mass have no thickness: their density stays as it is
+                self.rho  = np.where(full, self.mass * self.dx / np.where(full, self.dz, 1.0), self.rho) # same volume: dz = mass / rho * dx
             self.rho_bot = self.rho[-1]  # density of the layer that will exit the bottom
 
             ### Surface energy balance #####
@@ -1365,6 +1399,7 @@ class FirnDensityNoSpin:
                     self.Ts[iii], self.Tz, melt_mass, M2TS, sublim_mass = self.SEB.solve_Ts_subdt(PhysParams,iii,T_old,mtime)
                 else: # SEB time step is the same as main model.
                     self.Ts[iii], self.Tz, melt_mass, M2TS, sublim_mass = self.SEB.solve_Ts(PhysParams,iii,T_old)
+                self.albedo = self.SEB.albedo_out
 
                 # self.Ts[iii] = self.Tz[0] # set the surface temp to the skin temp calclated by SEB (needed for diffusion module)
                 ### SEB gives us mass of melt flux, at this time step. the following makes it consistent with other surface mass fluxes

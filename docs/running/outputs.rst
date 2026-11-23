@@ -35,7 +35,7 @@ Each output is a dataset in the results file. There are two kinds.
 * **truncate_outputs** true saves only every fifth row of ``density``, ``temperature``, ``LWC`` and ``age`` (and row 0), to reduce the file size, so their rows no longer line up with the other outputs.
 * The numbers are written with the precision of **output_bits** (``float32`` by default). Decimal dates around 2000 are therefore only precise to about 1e-4 years in float32; this is why the times in the examples look like 1980.0819.
 
-**Vectors** (2-D arrays with a few columns: ``DIP``, ``BCO``, ``Modelclimate``, ``meltvol``, ``refreeze``, ``runoff``): column 0 is the time, and the other columns are the values at that time, as described below.
+**Vectors** (2-D arrays with a few columns: ``DIP``, ``BCO``, ``Modelclimate``, ``meltvol``, ``refreeze``, ``runoff``, ``albedo``): column 0 is the time, and the other columns are the values at that time, as described below.
 
 The profile outputs
 -------------------
@@ -93,6 +93,9 @@ The vector outputs
 ``Modelclimate``
     (written when ``climate`` is in **outputs**) The forcing at each written time step. Six columns: time, accumulation (m a\ :sup:`-1` ice equivalent), skin temperature (K), melt (m a\ :sup:`-1` ice equivalent), rain (m a\ :sup:`-1` ice equivalent) and sublimation (m a\ :sup:`-1` ice equivalent, negative = mass loss). With the surface energy balance the melt is the melt that the SEB module calculated. These are the values of the time step; for the whole forcing, use the forcing file.
 
+``albedo``
+    (written when **SEB** is true) The albedo of the shortwave radiation that the surface energy balance used at each written time step. Two columns: time and albedo (dimensionless). If the SEB forcing is finer than the model time step, it is the mean over the sub-steps of the model step. With ``albedo_method`` ``prescribed`` it is the albedo of the forcing (with the missing values filled and **albedo_factor** applied; see :doc:`../extras/seb`). Row 0 (the initial state) is NaN: the albedo is calculated in the time steps.
+
 ``DIP``
     The depth-integrated porosity (firn air content) and the change of the surface elevation. The columns (with Python's 0-based indexing) are: (0) time, (1) depth-integrated porosity, a.k.a. firn air content (m), to the bottom of the model domain, (2) surface elevation change during the last time step (m), (3) cumulative elevation change since the start of the model run (m), (4) change in thickness (m) of the firn column by densification alone since the last time step, negative when the column got thinner (it is minus the sum of ``compaction`` over the nodes; zero in the first written row), (5) 'corrected' surface elevation change during the last time step (m), (6) 'corrected' cumulative elevation change since the start of the model run (m), (7) firn air content to the horizon given by **DIPhorizon** (m).
 
@@ -111,7 +114,18 @@ The vector outputs
 The forcing file
 ----------------
 
-``CFMforcing.hdf5`` holds the group ``main`` with the arrays the model used: ``time`` (decimal date), ``TSKIN`` (K), ``BDOT``, ``SUBLIM``, ``RAIN`` and ``SMELT`` (m ice equivalent per year; see :doc:`inputs`), and ``forcing_data_start``, the first date of the record. The reference-climate-interval repeats of the spin-up are not in it: it starts at the beginning of the record. With the surface energy balance there is also a group ``SEB`` with the sub-daily SEB forcing (``dtRATIO`` is the number of SEB steps per model step). It is not written when the forcing is read from csv files.
+``CFMforcing.hdf5`` holds the forcing that the model used. With the configuration file, it is what is needed to repeat the run (see :ref:`repeating-a-run`). The groups are:
+
+``main``
+    The arrays of ``climateTS`` (see :doc:`inputs`): ``time`` (decimal date), and the forcing on the model time step, for example ``TSKIN`` (K), ``BDOT``, ``SUBLIM`` and ``RAIN`` (m ice equivalent per year), and ``SMELT`` (without the surface energy balance, since with it the model calculates the melt). With the surface energy balance the columns of the dataframe that are not mass fluxes are also there (``T2m``, ``ALBEDO``, ``SW_d``, ``LW_d``, ``QH``, ``QL`` and so on). ``forcing_data_start`` is the first date of the record.
+
+``SEB``
+    Only with the surface energy balance: the forcing at the time resolution of the dataframe, which can be finer than the model time step (``dtRATIO`` is the number of SEB steps per model step). Albedo is an input of the surface energy balance and is not an output of the model, so this is where it is saved.
+
+``strain_rates``
+    Only if the ``strain_rates`` argument was given to the model.
+
+The reference-climate-interval repeats of the spin-up (see :doc:`spinup`) are about 85% of the series in a typical run, and they are copies of the record. They are not in the file. Instead, each group has the record, and the datasets ``sds``, ``sde`` and ``num_reps``: the start of the reference climate interval, the start of its last year, and the number of repeats that the model used. ``read_forcing`` puts the repeats back, and gives the series that the model ran. The attribute ``rci_trimmed`` of the group is true when the repeats were left out. The writer checks that the series can be made again exactly from the record before it leaves the repeats out. If it cannot (for example, when the first date of the reference climate interval is not the first date of the record), the whole series is written and ``rci_trimmed`` is false. A group can also have the group ``patch``: elements of a variable that the repeats do not give (the first time step of the mass fluxes without the surface energy balance, because the first time step has the mean step length), with their ``index`` and ``value``. The file is not written when the forcing is read from csv files.
 
 The spin file
 -------------

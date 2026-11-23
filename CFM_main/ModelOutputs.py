@@ -72,6 +72,9 @@ class ModelOutputs:
             elif varname in SCALAR_OUTPUTS:
                 self.Mout_dict[varname] = np.zeros((TWlen+1,2), dtype = self.c['output_bits'])
                 self.Mout_dict[varname][0,:]  = np.append(init_time, MOd[varname])
+            elif varname == 'albedo':
+                self.Mout_dict[varname] = np.zeros((TWlen+1,2), dtype = self.c['output_bits'])
+                self.Mout_dict[varname][0,:]  = np.append(init_time, MOd[varname])
 
             else:
                 if self.MOgrid:  # gridding outputs - grid rebuilt each timestep, see _build_gridded_row
@@ -130,7 +133,7 @@ class ModelOutputs:
                     intkind = 'linear'
 
                 if self.MOgrid:
-                    if varname in ('BCO','DIP','climate') + SCALAR_OUTPUTS:
+                    if varname in ('BCO','DIP','climate','albedo') + SCALAR_OUTPUTS:
                         self.Mout_dict[varname][Wtracker,:] = np.append(mtime,MOd[varname])
                     else:
                         self.Mout_dict[varname][Wtracker,:] = np.append(mtime, self._build_gridded_row(MOd,varname,intkind))
