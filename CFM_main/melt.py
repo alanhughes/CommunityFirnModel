@@ -1678,6 +1678,14 @@ def darcyscheme(self,iii):
         one sub-step (at most dtmax_darcy). The sub-steps are the same as
         without the snapshot, so the snapshot does not change the run.
 
+        Each call also writes two fields to `self.melt_diagnostics`, with both flow steps:
+        'surface_lid_substeps' is the number of sub-steps with an impermeable lens at node 0.
+        'surface_lid_runoff' [m we] is the liquid input of those sub-steps.
+        A lens at node 0 sends all input of the sub-step to runoff. So a count above 0 shows a
+        lid at the surface. A lens under a node 0 that is not a lens is not counted: for example,
+        the new snow node of the step over a lens that formed in the step before. The fields
+        only read the state.
+
     Notes
     -----
     Originally coded by Vincent Verjans. As of this documentation pass, the
@@ -1771,6 +1779,8 @@ def darcyscheme(self,iii):
     n_substeps  = 0   # number of sub-steps in this call
     idle_substeps = 0   # number of sub-steps of the implicit flow step with no liquid input and no node above its irreducible water
     root_solves = 0   # number of root solves of the implicit flow step
+    surface_lid_substeps = 0   # number of sub-steps with an impermeable lens at node 0 (all input runs off)
+    surface_lid_runoff = 0.   # liquid input of those sub-steps [m we]
     snapshot_at = None   # time in the step at which the snapshot outputs are taken [s]; None: no snapshot
     if getattr(self, 'darcy_snapshot', False):
         snapshot_fraction = _darcy_option(self.c, 'snapshot_fraction_darcy')
@@ -1927,6 +1937,10 @@ def darcyscheme(self,iii):
             imp, imptop = _find_impermeable_layers(self.rho, self.dz, RhoImp, ThickImp=ThickImp, DownToIce=False)
 
         rho_lens0 = np.copy(self.rho)  # rho snapshot used to detect lens-distribution changes at the next sub-step
+
+        if imptop[0] == 0:   # impermeable lens at node 0: the flow step sends all input to runoff; the count only reads the state
+            surface_lid_substeps += 1
+            surface_lid_runoff += liq_input
 
         ### Define all Darcy-scheme variables ###
         rhodcy = np.minimum(self.rho, rholim_dcy)   # cap density to allow residual percolation through ice lenses
@@ -2277,6 +2291,8 @@ def darcyscheme(self,iii):
     self.melt_diagnostics['surface_heat'] = surface_heat  # [J m-2]
     self.melt_diagnostics['runoff']   = runofftot         # [m we]
     self.melt_diagnostics['substeps'] = n_substeps
+    self.melt_diagnostics['surface_lid_substeps'] = surface_lid_substeps   # sub-steps with a lens at node 0
+    self.melt_diagnostics['surface_lid_runoff'] = surface_lid_runoff       # [m we] liquid input of those sub-steps
     self.melt_diagnostics['partial_node_merges'] = partial_node_merges   # partial nodes 0 that merged into the node below
     self.melt_diagnostics['excess_from_conduction'] = excess_conduction  # [m we] ice that the conduction solve froze above the pore space (moved down plus runoff)
     self.melt_diagnostics['excess_from_conduction_runoff'] = excess_conduction_runoff   # [m we] part of it that ran off

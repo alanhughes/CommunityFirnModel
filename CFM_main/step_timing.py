@@ -67,6 +67,12 @@ The columns of a row:
   Empty when the scheme does not give the value (root_solves and idle_substeps:
   the implicit flow step only; substeps: darcy only). For bucket, budget_residual
   and n_wet_cold_layers come from its second checks (budget_2, cold_2).
+- refrozen_conduction_mwe, surface_heat_Jm2, surface_lid_substeps, surface_lid_runoff_mwe:
+  the fields refrozen_conduction [m w.e.], surface_heat [J m-2], surface_lid_substeps and
+  surface_lid_runoff [m w.e.] of model.melt_diagnostics. Empty when the key is absent (bucket,
+  dry and nomelt steps). surface_lid_substeps is the number of sub-steps with an impermeable lens
+  at node 0. All input of such a sub-step runs off, so surface_lid_runoff_mwe is that input. A lens
+  under a node 0 that is not a lens is not counted.
 
 The small work of a mark (the counts of the nodes, the read of the melt) falls in the
 part that follows the mark. The time of the csv rows is in no part: it is the
@@ -92,6 +98,9 @@ DIAGNOSTIC_COLUMNS = (
     ('lwc_end_mwe', 'lwc_end'), ('refrozen_mwe', 'refrozen'), ('runoff_mwe', 'runoff'),
 )
 
+# The keys of melt_diagnostics for the last four columns (darcy only), in the order of the columns.
+DARCY_EXTRA_KEYS = ('refrozen_conduction', 'surface_heat', 'surface_lid_substeps', 'surface_lid_runoff')
+
 CSV_COLUMNS = (
     ('step', 'modeltime', 'scheme', 'wall_s', 'cpu_s')
     + tuple(f'wall_{part}_s' for part in PARTS)
@@ -99,6 +108,7 @@ CSV_COLUMNS = (
     + ('nodes', 'wet_nodes_in', 'wet_nodes_out', 'melt_mwe', 'rain_mwe')
     + tuple(name for name, _ in DIAGNOSTIC_COLUMNS)
     + ('budget_residual', 'n_wet_cold_layers', 'idle_substeps')
+    + ('refrozen_conduction_mwe', 'surface_heat_Jm2', 'surface_lid_substeps', 'surface_lid_runoff_mwe')
 )
 
 
@@ -205,10 +215,12 @@ class StepTimer:
             residual = checks.get('budget', checks.get('budget_2', {})).get('residual')
             cold_layers = cold.get('n_wet_cold_layers')
             idle = diagnostics.get('idle_substeps')
+            lid_values = [diagnostics.get(key) for key in DARCY_EXTRA_KEYS]
         else:
             scheme = 'dry' if model.MELT else 'nomelt'
             values = [None] * len(DIAGNOSTIC_COLUMNS)
             residual = cold_layers = idle = None
+            lid_values = [None] * len(DARCY_EXTRA_KEYS)
         wall = sum(wall_parts)
         cpu = sum(cpu_parts)
         extra = self.extra
@@ -223,6 +235,8 @@ class StepTimer:
         row += [_number(value) for value in values]
         row += [_number(residual), '' if cold_layers is None else int(cold_layers),
                 '' if idle is None else int(idle)]
+        row += [_number(lid_values[0]), _number(lid_values[1]),
+                '' if lid_values[2] is None else int(lid_values[2]), _number(lid_values[3])]
         self.rows.append(row)
 
         totals = self.year_totals
