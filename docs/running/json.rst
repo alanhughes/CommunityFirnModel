@@ -258,6 +258,13 @@ rhos0
   :default: ``350.0``
   :units: :math:`\textrm{kg m}^{-3}`
 
+random_seed
+-----------
+  Seed for the random numbers in a run. They are used by the surface-density noise (**srho_type** ``noise``) and by the synthetic surface isotope signal that the model makes when there is no isotope forcing file. Each source of randomness has its own sequence from this seed, so the same configuration file gives the same results every time. Change the seed to get another realisation of the noise.
+
+  :type: ``integer``
+  :default: ``0``
+
 r2s0
 ----
   Surface grain size at each time step if **calcGrainSize** is false.
@@ -351,7 +358,7 @@ grid_output_max_depth
 
 isoDiff
 -------
-  Whether or not to include water isotope diffusion in the model run.
+  Whether or not to include water isotope diffusion in the model run. The diffusion of the isotopes is that of Johnsen et al. (2000): the diffusion of water vapor in the pore space, with the diffusivity, the saturation vapor pressure and the tortuosity (**vapor_tortuosity_b**) that the vapor transport (**vaporTransport**) uses too. It does not include the isotopes that the vapor transport moves with the mass (a warning is printed if both are on).
 
   :type: ``boolean``
   :default: ``False``
@@ -572,6 +579,57 @@ no_densification
   :type: ``boolean``
   :default: ``false``
 
+vaporTransport
+--------------
+  **Experimental (beta):** vapor diffusion in the pore space. Water vapor moves from the warmer to the colder layers, driven by the gradient of the saturation vapor density, which depends on temperature only. It changes the mass of a layer at fixed volume (it fills or empties the pores), so the density changes but the thickness does not; it is not a densification term. The flux goes through the pore space with the same effective diffusivity as the isotope diffusion (the porosity times the inverse tortuosity of Johnsen et al. (2000), see **vapor_tortuosity_b**, so it stops at 804 kg m\ :sup:`-3`). The total mass of the column is conserved; the flux is zero at the surface and at the bottom unless **vapor_surface_exchange** is set. It is calculated on blocks of layers (**vapor_min_thickness**) and limited so that no layer loses more than half its mass or fills more than half its free pore space in a time step, which keeps daily steps stable. With **vapor_latent_heat** the latent heat that the vapor carries is added to the heat conduction. The diffusivity and the saturation vapor pressure are those of the isotope diffusion module (water vapor in air, with the pressure **site_pressure**). Status: it conserves mass and (checked at DYE-2 and Summit) the heat that it carries matches the latent heat of the vapor mass flux to a few percent, and for Mars its constants reproduce the critical accumulation rates of Arthern et al. (2000) to within a factor of 1.5 (pressure assumed), but it has NOT been validated against measured firn density, temperature or isotope profiles, the vapor does not carry isotopes (a warning is printed if **isoDiff** is also true), and the factor that increases the diffusivity in snow (**vapor_yosida_factor**) is not verified for Earth. Do not use the results for science without checking them; the effect is small at cold dry sites (Summit) and a few percent of the firn air content at a melt site (DYE-2). With the option off (the default) the model results are identical to those without the vapor code. A message is printed once if the flux is limited in a time step.
+
+  :type: ``boolean``
+  :default: ``false``
+
+vapor_atmosphere
+----------------
+  Only with **vaporTransport**: the gas of the pore space, which sets the diffusivity of the vapor. ``air`` is the Earth. ``CO2`` is the Mars atmosphere (to reproduce Arthern et al., 2000): then set **site_pressure** to the surface pressure of Mars (hPa).
+
+  :type: ``string``
+  :options: ``air``, ``CO2``
+  :default: ``air``
+
+vapor_yosida_factor
+-------------------
+  Only with **vaporTransport**: factor by which the diffusivity of the vapor in the snow is larger than in the free gas (Yosida, 1955). It is not in the default configuration: it is 1 for ``air`` (the free-air diffusivity, as the isotope diffusion module; no enhancement has been verified for the firn of the Earth) and 4 for ``CO2`` (Clow, 1987, and Arthern et al., 2000). Set it to test the sensitivity.
+
+  :type: ``float``
+  :default: not set (1 for ``air``, 4 for ``CO2``)
+
+vapor_min_thickness
+-------------------
+  Only with **vaporTransport**: the thickness of the blocks in which the vapor flux is calculated. Adjacent layers that are thinner than this (with daily time steps the surface has layers of a fraction of a millimeter, from days with almost no snowfall) are grouped into a block of at least this thickness, the flux is calculated between the blocks, and the mass change of a block is shared by its layers (in proportion to their mass for a loss and to their free pore space for a gain, so all of them lose the same fraction). Layers at least this thick are their own block. The model layers are not changed (unlike with **merging**, which changes the model results and pads the bottom of the column). In a day vapor diffuses about 4 cm; ``0`` is one layer per block (the flux can then empty a thin layer; it is limited so that no block loses more than half its mass or fills more than half its free pore space in a time step).
+
+  :type: ``float``
+  :default: ``0.01``
+  :units: m
+
+vapor_surface_exchange
+----------------------
+  Only with **vaporTransport**: gives the top of the column a vapor flux, the flux just beneath the surface, :math:`q(0,t)`, of Arthern et al. (2000), where it is part of the accumulation, :math:`b_s = \rho_s v(0,t) + q(0,t)`, and decides on Mars whether the pore space fills. It is calculated like the flux between layers, with the vapor density gradient between the top two layers (or blocks, see **vapor_min_thickness**) and the pore space of the top layer; without the key the top is closed. The mass comes from the atmosphere, so the mass of the column changes, and the accumulation of the model must be the mass deposited on the surface (:math:`b_s - q(0)`). Do not use it together with sublimation or deposition of the same vapor (**SUBLIM**, or the turbulent fluxes of the **SEB**), which is the exchange of vapor with the atmosphere on Earth. A thin layer of snow over ice has a flux that is too small by about a factor of two (the gradient between the layer centers includes half of the ice cell). Off by default.
+
+  :type: ``boolean``
+  :default: ``false``
+
+vapor_latent_heat
+-----------------
+  Only with **vaporTransport**: adds the latent heat that the vapor carries to the heat conduction. The vapor flux follows the temperature gradient and carries the latent heat of sublimation, which acts as an added thermal conductivity :math:`K_v = L\,D\,\phi\,(1/\tau)\,d\rho_{vs}/dT` (the same diffusivity, porosity and tortuosity as the mass flux). It is added to the conductivity of the heat solvers, so it is implicit and stable in thin layers. It is 5 to 30% of the conductivity of firn at 150 kg m\ :sup:`-3` and 253 to 273 K, 1 to 6% at 300, below 2% from 450 and zero from 804 kg m\ :sup:`-3`: it matters in the surface snow near the melting point. The default conductivity (**conductivity** ``Calonne2019``, computations with air and ice only) does not contain the vapor; the conductivities that are fits to measurements (Yen, Sturm, Van Dusen, ...) are apparent conductivities and may already contain it, so do not combine them with this option.
+
+  :type: ``boolean``
+  :default: ``false``
+
+vapor_tortuosity_b
+------------------
+  Parameter of the tortuosity of the firn for water vapor, :math:`1/\tau = 1 - b\,(\rho/\rho_i)^2` (zero for densities of :math:`\rho_i/\sqrt{b}` and above, 804 kg m\ :sup:`-3` for the default), from Johnsen et al. (2000), who calibrated it on observed isotope diffusion lengths. It is used by the isotope diffusion (**isoDiff**) and by the vapor transport (**vaporTransport**), which therefore have the same effective diffusivity of the vapor in the firn.
+
+  :type: ``float``
+  :default: ``1.3``
+
 rad_pen
 -------
   Option to turn on radiation penetration module.
@@ -731,9 +789,60 @@ SEB_TL_thick
   :default: ``0.05``
   :units: :math:`\textrm{m}`
 
+albedo_method
+-------------
+  How the albedo of the shortwave radiation is found. ``prescribed`` takes it from the ``ALBEDO`` column of the forcing. ``gardner_sharp`` is the parameterization of Gardner and Sharp (2010) (from the grain size, the solar zenith angle, the carbon and the cloud optical thickness), and ``greuell_konzelmann`` is the density-dependent albedo of Greuell and Konzelmann (1994); with these two the forcing does not need ``ALBEDO``. More methods can be added in ``albedo.py``, see :doc:`../extras/seb`, which has the equations and the keys below. The albedo that the model used is the output ``albedo`` (see :doc:`outputs`). Only used when **SEB** is True.
+
+  :type: ``string``
+  :options: ``prescribed``, ``gardner_sharp``, ``greuell_konzelmann``
+  :default: ``prescribed``
+
+albedo_snow, albedo_ice
+-----------------------
+  Only with **albedo_method** ``greuell_konzelmann``, where they are required (they have no default): the albedo of fresh snow (at the density **albedo_rho_snow**) and of ice (at **albedo_rho_ice**). They are tuning constants.
+
+  :type: ``float``
+
+albedo_rho_snow, albedo_rho_ice
+-------------------------------
+  Only with **albedo_method** ``greuell_konzelmann``: the density of fresh snow and of ice, between which the albedo changes linearly with the density of the surface snow.
+
+  :type: ``float``
+  :default: ``300`` and ``910``
+  :units: :math:`\textrm{kg m}^{-3}`
+
+albedo_latitude, albedo_longitude
+---------------------------------
+  Only with **albedo_method** ``gardner_sharp``: the latitude and the longitude (degrees; east is positive) of the site, for the solar zenith angle. If they are not given, **lat_val** and **lon_val** are used (the example script sets them). The latitude is required, and the longitude only matters for steps shorter than a day (default 0).
+
+  :type: ``float``
+
+albedo_carbon
+-------------
+  Only with **albedo_method** ``gardner_sharp``: the concentration of light-absorbing carbon in the snow. The parameterization is fitted for 0 to 2 ppmw.
+
+  :type: ``float``
+  :default: ``0``
+  :units: ppmw
+
+albedo_cloud_tau
+----------------
+  Only with **albedo_method** ``gardner_sharp``: the cloud optical thickness, if the forcing does not have a column ``TAU``. 0 is a clear sky. The parameterization is fitted for 0 to 30.
+
+  :type: ``float``
+  :default: ``0``
+
+albedo_grain_depth
+------------------
+  Only with **albedo_method** ``gardner_sharp``: the depth to which the specific surface area of the snow is averaged (weighted by mass), from the surface.
+
+  :type: ``float``
+  :default: ``0.05``
+  :units: m
+
 albedo_factor
 -------------
-  Scaling factor applied to the input albedo (albedo is multiplied by this value). Use for tuning surface reflectivity. Only used when **SEB** is True.
+  Scaling factor applied to the input albedo (albedo is multiplied by this value). Use for tuning surface reflectivity. Only used when **SEB** is True and **albedo_method** is ``prescribed``.
 
   :type: ``float``
   :default: ``1``

@@ -8,6 +8,8 @@ from solver import transient_solve_TR
 # from Gasses import gasses 
 # from Sites import sites 
 from reader import read_input, read_init
+from config_loader import get_rng
+from vapor import saturation_vapor_pressure, vapor_diffusivity, firn_tortuosity_inverse
 import json
 import scipy.interpolate as interpolate
 from constants import *
@@ -98,9 +100,10 @@ class isotopeDiffusion:
                 self.iso_sig2_z = iso_sig2_init[1:]
                 ar1             = 0.9   # red noise memory coefficient
                 std_rednoise    = 2    # red noise standard deviation
-                self.del_s      = std_rednoise*np.random.randn(stp) # white noise
+                rng             = get_rng(config, isotope)
+                self.del_s      = std_rednoise*rng.standard_normal(stp) # white noise
                 for x in range(1,stp):
-                    self.del_s[x] = self.del_s[x-1]*ar1 + np.random.randn()  # create red noise from white
+                    self.del_s[x] = self.del_s[x-1]*ar1 + rng.standard_normal()  # create red noise from white
                 self.del_s      = self.del_s - 50
                 self.iso_sig2_s = np.zeros(stp)
 
@@ -145,25 +148,18 @@ class isotopeDiffusion:
         ### Define diffusivity for each isotopic species
         ### Establish values needed for diffusivity calculation
         m           = 0.018 # kg/mol; molar mass of water
-        pz          = 3.454e12 * np.exp(-6133 / self.Tz) # Pa; saturation vapor pressure over ice
+        pz          = saturation_vapor_pressure(self.Tz) # Pa; saturation vapor pressure over ice (shared with vapor.py)
 
         alpha_18_z  = 0.9722 * np.exp(11.839 / self.Tz) # fractionation factor for 18_O
         # alpha_18_z    = np.exp(11.839/Tz-28.224*np.power(10,-3))          # alternate formulation from Eric's python code
         alpha_D_z   = 0.9098 * np.exp(16288 / (self.Tz**2)) # fractionation factor for D
-        Po          = 1.0 # reference pressure in atm
-        # P         = 1.0
-        P           = self.c['site_pressure']/1013.25 # Pressure at WAIS from Christo's thesis.
+        ### Set diffusivity in air (units of m^2/s); the pressure is site_pressure (hPa; WAIS from Christo's thesis), shared with vapor.py
+        Da          = vapor_diffusivity(self.Tz, 100.0 * self.c['site_pressure'], atmosphere='air')
 
-        ### Set diffusivity in air (units of m^2/s)
-        Da          = 2.11e-5 * (self.Tz / 273.15)**1.94 * (Po / P)
-
-        ### Calculate tortuosity
-        invtau      = np.zeros(int(len(self.dz)))
-        b           = 1.3 # Tortuosity parameter (Johnsen 2000)
-        invtau[self.rho < RHO_I / np.sqrt(b)]   = 1.0 - (b * (self.rho[self.rho < RHO_I / np.sqrt(b)] / RHO_I)**2)
-        # b           = 0.25 # Tortuosity parameter (Emma's value), effective b = 0.0625 (taken outside of squared term)
+        ### Calculate tortuosity (Johnsen 2000; parameter b, 1.3 by default, shared with vapor.py)
+        # Emma's value: b = 0.25, effective b = 0.0625 (taken outside of squared term):
         # invtau[self.rho < RHO_I / np.sqrt(b)]   = 1.0 - (b * (self.rho[self.rho < RHO_I / np.sqrt(b)] / RHO_I))**2 #Emma
-        invtau[self.rho >= RHO_I / np.sqrt(b)]  = 0.0
+        invtau      = firn_tortuosity_inverse(self.rho, self.c.get('vapor_tortuosity_b', 1.3))
 
         ### Set diffusivity for each isotope
         c_vol = np.ones_like(self.rho) # Just a filler here to make the diffusion work.
