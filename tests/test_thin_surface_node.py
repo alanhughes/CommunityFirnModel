@@ -296,6 +296,74 @@ def test_the_excess_fills_the_room_of_a_node_and_goes_on():
     assert column.LWC[7] == pytest.approx(min(1e-3, excess - 0.1e-3), rel=1e-9)
 
 
+def two_dense_nodes_column():
+    # Nodes 5 and 6 are both dense and wet, so the same solve takes both above their pores.
+    column = heat_column()
+    column.rho[6] = 900.
+    column.mass[6] = 900. * column.dz[6]
+    column.Tz[6] = T_MELT
+    column.LWC[6] = 3e-4   # all of it freezes in the solve: 0.3 mm is above the 0.085 mm of pore ice
+    return column
+
+
+@pytest.mark.unit
+def test_no_water_goes_into_a_node_that_the_same_solve_froze_to_ice():
+    column = two_dense_nodes_column()
+    alone = two_dense_nodes_column()
+    melt._conduct_with_ghost_node(alone, 0, SUBSTEP, 245.15)
+    LWC_node_6_after_solve = alone.LWC[6]
+    mass_before = total_water_mass(column)
+    theta_s = np.maximum(0., (RHO_I - column.rho) / RHO_I) * 0.917 - 1e-6   # from the start of the sub-step, as the scheme gives it
+    melt._conduction_substep(column, 0, SUBSTEP, theta_s=theta_s)
+    excess, runoff = column.conduction_excess_last
+    assert runoff == 0. and excess > 1e-5
+    assert column.rho[5] == pytest.approx(RHO_I, abs=1e-6) and column.rho[6] == pytest.approx(RHO_I, abs=1e-6)
+    assert column.LWC[6] == pytest.approx(LWC_node_6_after_solve, abs=1e-15)   # node 6 is ice: it takes no water
+    assert column.LWC[7] > 0.                                     # the water goes to the next node with room
+    assert total_water_mass(column) + runoff * RHO_W_KGM == pytest.approx(mass_before, rel=1e-12)
+
+
+@pytest.mark.unit
+def test_a_node_that_the_solve_takes_past_RhoImp_is_impermeable():
+    # Node 6 is at 800 kg m-3 with 0.45 mm of water at the melting point. The solve takes it to 890 kg m-3:
+    # above RhoImp (873), below the density of ice. It is not in imp.
+    def column_with_node_6():
+        column = heat_column()
+        column.rho[6] = 800.
+        column.mass[6] = 800. * column.dz[6]
+        column.Tz[6] = T_MELT
+        column.LWC[6] = 4.5e-4
+        return column
+    column = column_with_node_6()
+    mass_before = total_water_mass(column)
+    melt._conduction_substep(column, 0, SUBSTEP, RhoImp=873.)
+    excess, runoff = column.conduction_excess_last
+    assert 873. <= column.rho[6] < RHO_I
+    assert excess > 1e-5 and runoff == pytest.approx(excess, rel=1e-12)   # the lens stops the water
+    assert np.sum(column.LWC[6:]) == 0.
+    assert total_water_mass(column) + runoff * RHO_W_KGM == pytest.approx(mass_before, rel=1e-12)
+    # With no RhoImp the same excess is stored below node 5
+    column = column_with_node_6()
+    melt._conduction_substep(column, 0, SUBSTEP)
+    assert column.conduction_excess_last[1] == 0.
+    assert np.sum(column.LWC[6:]) > 0.
+
+
+@pytest.mark.unit
+def test_theta_s_above_the_true_pores_does_not_give_a_node_more_room():
+    column = heat_column()
+    column.rho[6] = 800.                                          # true pores 0.128 of the volume
+    column.mass[6] = 800. * column.dz[6]
+    mass_before = total_water_mass(column)
+    theta_s = np.full(60, 0.9)                                    # as from rhodcy: far above the true pores
+    melt._conduction_substep(column, 0, SUBSTEP, theta_s=theta_s)
+    excess, runoff = column.conduction_excess_last
+    assert excess > 1e-5
+    assert column.LWC[6] == pytest.approx(column.dz[6] * ((RHO_I - 800.) / RHO_I * 0.917 - 1e-6), rel=1e-9)
+    assert column.LWC[7] > 0.                                     # the rest goes on
+    assert total_water_mass(column) + runoff * RHO_W_KGM == pytest.approx(mass_before, rel=1e-12)
+
+
 @pytest.mark.unit
 def test_nothing_changes_without_excess():
     column = heat_column(dense_rho=600., water=1e-5)
