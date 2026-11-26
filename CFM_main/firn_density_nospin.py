@@ -14,6 +14,7 @@ import solver
 from config_loader import load_config, get_rng
 from reader import read_input
 from reader import read_init
+from reader import read_restart_value
 from writer import write_spin_hdf5
 from writer import write_nospin_hdf5
 from writer import SpinUpdate, SpinUpdate_res 
@@ -232,6 +233,13 @@ class FirnDensityNoSpin:
             restart_offset = False
         
         self.updatedStartDate = updatedStartDate
+
+        ### A restart from a saved snapshot uses the layer thickness of the run, not the one rebuilt from z.
+        ### The mass and iceout of the snapshot are read further down.
+        restart_dz = read_restart_value(self.c['resultsFolder'], self.c['spinFileName'], 'dzSpin', updatedStartDate)
+        restart_from_snapshot = restart_dz is not None # the snapshot was saved by a run (not the spin-up column, not an older file)
+        if restart_from_snapshot:
+            self.dz = restart_dz[1:]
 
         ### get temperature and accumulation rate from input csv file
         self.forcing_dict = {} # This dictionary holds all forcing data and will be saved
@@ -542,6 +550,19 @@ class FirnDensityNoSpin:
             # self.modeltime  = np.linspace(yr_start, yr_end, self.stp)
             # self.t          = 1.0 / self.c['stpsPerYear']                   # years per time step
         #####################
+        ### Mean number of steps per year of the run, for the mean accumulation rate of a parcel (bdot_mean) and for
+        ### the instantaneous accumulation rate (steps). The mean is over the whole forcing record, not over the part that a
+        ### restart runs: with a variable time step, the mean of a restart would differ from that of the run that made the snapshot.
+        ### (SeasonalTcycle uses the interp time steps, also when timesetup is exact.)
+        if restart_from_snapshot and self.c['timesetup']=='exact' and not self.c.get('SeasonalTcycle', False):
+            dt_record = np.diff(input_year_temp_full)*S_PER_YEAR
+            dt_record = np.append(np.mean(dt_record),dt_record)
+            t_record = dt_record/S_PER_YEAR
+        else:
+            dt_record = self.dt
+            t_record = self.t
+        self.steps_per_year_mean = np.mean(S_PER_YEAR/dt_record)
+        self.steps_per_year_record = 1 / np.mean(t_record)
         if self.forcing_data_start is None:
             self.forcing_data_start = self.modeltime[0]
       
@@ -622,34 +643,45 @@ class FirnDensityNoSpin:
             self.sublim       = -9999 * np.ones_like(self.bdot)
         self.bdotSec    = self.bdot / S_PER_YEAR / (S_PER_YEAR/self.dt) # accumulation at each time step (meters i.e. per second). gets multiplied by S_PER_YEAR later. (sort of hacky, I know)
 
+        ### In a restart from a snapshot the rolling means are taken over the whole forcing record and the restart takes its part at
+        ### the end, so they are the same as in the run that made the snapshot, also when less than Nyears of forcing
+        ### are left after the snapshot.
         try: # Rolling mean average surface temperature (long-term climate)
             Nyears = 10
-            NN = int(np.mean(S_PER_YEAR/self.dt)*Nyears)
+            NN = int(self.steps_per_year_mean*Nyears)
 
             T_mean_short = pd.Series(self.Ts).rolling(window=NN+1,win_type='hamming').mean().values
             self.T_mean = pd.Series(Ts_full).rolling(window=NN+1,win_type='hamming').mean().values.copy()
-            self.T_mean = self.T_mean[-len(T_mean_short):]
-            self.T_mean[np.isnan(self.T_mean)] = self.T_mean[NN]
+            if restart_from_snapshot: # fill the gap at the start of the whole record, then take the part of the restart
+                self.T_mean[np.isnan(self.T_mean)] = self.T_mean[NN]
+                self.T_mean = self.T_mean[-len(T_mean_short):]
+            else:
+                self.T_mean = self.T_mean[-len(T_mean_short):]
+                self.T_mean[np.isnan(self.T_mean)] = self.T_mean[NN]
         except Exception:
             Nyears = 10
-            NN = int(np.mean(S_PER_YEAR/self.dt)*Nyears)
+            NN = int(self.steps_per_year_mean*Nyears)
             self.T_mean = np.mean(self.Ts) * np.ones(self.stp)
             print('Error calculating T_mean, using mean surface over all time')
 
         try: # Rolling mean average accumulation rate (long-term climate)
             Nyears = 10
-            NN = int(np.mean(S_PER_YEAR/self.dt)*Nyears)
+            NN = int(self.steps_per_year_mean*Nyears)
 
             bsf_full = interpolate.interp1d(input_year_bdot_full, input_bdot_full, int_type, fill_value='extrapolate')
             bdot_full = bsf_full(modeltime_full)
 
             bdot_av_short = pd.Series(self.bdot).rolling(window=NN+1,win_type='hamming').mean().values
             self.bdot_av = pd.Series(bdot_full).rolling(window=NN+1,win_type='hamming').mean().values.copy()
-            self.bdot_av = self.bdot_av[-len(bdot_av_short):]
-            self.bdot_av[np.isnan(self.bdot_av)] = self.bdot_av[NN]
+            if restart_from_snapshot: # fill the gap at the start of the whole record, then take the part of the restart
+                self.bdot_av[np.isnan(self.bdot_av)] = self.bdot_av[NN]
+                self.bdot_av = self.bdot_av[-len(bdot_av_short):]
+            else:
+                self.bdot_av = self.bdot_av[-len(bdot_av_short):]
+                self.bdot_av[np.isnan(self.bdot_av)] = self.bdot_av[NN]
         except Exception:
             Nyears = 10
-            NN = int(np.mean(S_PER_YEAR/self.dt)*Nyears)
+            NN = int(self.steps_per_year_mean*Nyears)
             self.bdot_av = np.mean(self.bdot) * np.ones(self.stp)
             print('Error calculating bdot_av, using mean accumulation over all time')
 
@@ -704,9 +736,13 @@ class FirnDensityNoSpin:
         except KeyError:
             manual_iceout = False
 
+        restart_iceout = read_restart_value(self.c['resultsFolder'], self.c['spinFileName'], 'iceoutSpin', updatedStartDate)
         if manual_iceout:
             self.iceout = self.c['iceout']
             print('Ensure that your iceout value has units m ice eq. per year!')
+        elif restart_iceout is not None:
+            self.iceout = restart_iceout[1]
+            print(f'iceout = {self.iceout:.4f} m ice eq./yr (from the spin file snapshot)')
         else:
             flux_in = self.bdot.copy()
             if self.c['SUBLIM']:
@@ -808,6 +844,9 @@ class FirnDensityNoSpin:
 
         ### set up initial mass, stress, and mean accumulation rate
         self.mass           = self.rho * self.dz
+        restart_mass        = read_restart_value(self.c['resultsFolder'], self.c['spinFileName'], 'massSpin', updatedStartDate)
+        if restart_mass is not None:
+            self.mass       = restart_mass[1:]
         self.sigma          = (self.mass + (self.LWC * RHO_W_KGM)) * self.dx * GRAVITY
         self.sigma          = self.sigma.cumsum(axis = 0)
         self.mass_sum       = self.mass.cumsum(axis = 0)
@@ -1162,7 +1201,7 @@ class FirnDensityNoSpin:
         based on the user specified number of timesteps in the model run. Updates the firn density using a user specified 
         
         '''
-        self.steps = 1 / np.mean(self.t) # steps per year
+        self.steps = self.steps_per_year_record # steps per year
         start_time=time.time() # this is a timer to keep track of how long the model run takes.
 
         solver._diag_reset()
@@ -1682,7 +1721,7 @@ class FirnDensityNoSpin:
             self.sigma      = self.sigma.cumsum(axis = 0)
             self.mass_sum   = self.mass.cumsum(axis = 0)
             
-            self.bdot_mean  = (np.concatenate(( [self.mass_sum[0] / (RHO_I * S_PER_YEAR)], self.mass_sum[1:] * self.t[iii] / (self.age[1:] * RHO_I) ))) * np.mean(S_PER_YEAR/self.dt) * S_PER_YEAR
+            self.bdot_mean  = (np.concatenate(( [self.mass_sum[0] / (RHO_I * S_PER_YEAR)], self.mass_sum[1:] * self.t[iii] / (self.age[1:] * RHO_I) ))) * self.steps_per_year_mean * S_PER_YEAR
 
             ### NOTE: sigma = bdot_mean*GRAVITY*age/S_PER_YEAR*917.0) (or, sigma = bdot*g*tau, steady state conversion.)
 

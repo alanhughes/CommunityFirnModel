@@ -130,7 +130,7 @@ The reference-climate-interval repeats of the spin-up (see :doc:`spinup`) are ab
 The spin file
 -------------
 
-``CFMspin.hdf5`` has the datasets ``densitySpin``, ``tempSpin``, ``ageSpin``, ``depthSpin``, ``bdot_meanSpin`` and, when they are used, ``LWCSpin``, ``r2Spin``, ``HxSpin``, ``gridSpin`` (the tracking of the merged grid) and the isotope profiles. Each column is a snapshot (the first is the end of the spin-up, the others are the ``spinUpdate`` snapshots), and the first row is the time of the snapshot. See :doc:`spinup` for how restarts use them.
+``CFMspin.hdf5`` has the datasets ``densitySpin``, ``tempSpin``, ``ageSpin``, ``depthSpin``, ``bdot_meanSpin`` and, when they are used, ``LWCSpin``, ``r2Spin``, ``HxSpin``, ``gridSpin`` (the tracking of the merged grid) and the isotope profiles. Each column is a snapshot (the first is the end of the spin-up, the others are the ``spinUpdate`` snapshots), and the first row is the time of the snapshot. The ``spinUpdate`` snapshots also have the datasets ``massSpin`` and ``dzSpin`` (the mass and the thickness of each layer) and ``iceoutSpin`` (the time, and ``iceout`` in m ice eq. per year). They have one column for each ``spinUpdate`` snapshot, so they have fewer columns than ``densitySpin``: the spin-up column does not have them. See :doc:`spinup` for how restarts use them.
 
 Reading the results
 -------------------
