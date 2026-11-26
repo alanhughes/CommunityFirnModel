@@ -303,7 +303,7 @@ def _find_impermeable_layers(rho, dz, RhoImp, ThickImp=0., DownToIce=False,
 ### end _find_impermeable_layers ###
 ###################################
 
-def leaky_lens_routing(LWCblocked, stcap, dense, dz, decay_length):
+def leaky_lens_routing(LWCblocked, stcap, dense, dz, decay_length, pass_fraction=None, pass_mode='first'):
     '''
     Route water that is blocked by ice lenses through partially permeable
     lenses (used by bucket when LeakyLenses is True).
@@ -321,24 +321,66 @@ def leaky_lens_routing(LWCblocked, stcap, dense, dz, decay_length):
     decay_length -> 0 blocks all water at the first dense node, as ThickImp = 0
     does; a large decay_length lets water pass all lenses.
 
+    If pass_fraction (f, between 0 and 1) is given, it replaces the
+    exp(-dz/decay_length) rule with a transmission that does not depend on the
+    thickness of the lens:
+
+    - 'first' (aligned holes): a share (1 - f) of the blocked water is routed
+      as with decay_length = 0 (every dense node is a barrier), and a share f
+      is routed as with an infinite decay_length (only the bottom node
+      blocks). The second routing sees the storage capacity that the first
+      one leaves. Water released inside a dense run is split in the same way.
+    - 'every' (independent holes): each run of consecutive dense nodes passes
+      a share f of the water that reaches it, whatever its thickness or number
+      of nodes. The transmission is f at the deepest node of the run and 1 at
+      its other nodes, so excess water released inside the run meets the split
+      too. Two runs in series pass f**2.
+
+    With f = 0 both modes give decay_length = 0. With f = 1 both modes give
+    an infinite decay_length.
+
     (Contributed by Aslak Grinsted, pull request #25.)
 
     :param LWCblocked: water blocked above an impermeable barrier, per node [m we]
     :param stcap: remaining storage capacity for additional liquid water, per node [m we]
     :param dense: boolean array, True for nodes with density >= RhoImp
     :param dz: node thickness [m]
-    :param decay_length: e-folding ice thickness of the transmission [m]
+    :param decay_length: e-folding ice thickness of the transmission [m]; not used if pass_fraction is given
+    :param pass_fraction: share of the water that a lens passes, between 0 and 1 (None: use decay_length)
+    :param pass_mode: 'first' or 'every'; only used if pass_fraction is given
 
     :return storage: water added to the storage of each node [m we]
     :return blocked: water still blocked, per node [m we]
     '''
     nnd     = len(dz)
+    if pass_fraction is None:
+        if decay_length > 0:
+            transmission = np.where(dense, np.exp(-dz / decay_length), 1.0) # fraction passed on by each node
+        else:
+            transmission = np.where(dense, 0.0, 1.0)
+        return _route_through_lenses(LWCblocked, stcap, dense, transmission)
+
+    if pass_mode == 'first':
+        blocked_all = (1.0 - pass_fraction) * LWCblocked # as if every dense node were a barrier
+        storage_1, blocked_1 = _route_through_lenses(blocked_all, stcap, dense, np.where(dense, 0.0, 1.0))
+        passing     = pass_fraction * LWCblocked        # as if no dense node blocked
+        storage_2, blocked_2 = _route_through_lenses(passing, stcap - storage_1, dense, np.ones(nnd))
+        return storage_1 + storage_2, blocked_1 + blocked_2
+
+    # 'every': the deepest node of each dense run passes pass_fraction, the others pass everything
+    transmission = np.ones(nnd)
+    run_end      = dense & ~np.append(dense[1:], False)
+    transmission[run_end] = pass_fraction
+    return _route_through_lenses(LWCblocked, stcap, dense, transmission)
+
+def _route_through_lenses(LWCblocked, stcap, dense, transmission):
+    '''
+    Loop of leaky_lens_routing for a given transmission (fraction passed on
+    by each node).
+    '''
+    nnd     = len(dense)
     storage = np.zeros(nnd)
     blocked = np.zeros(nnd)
-    if decay_length > 0:
-        transmission = np.where(dense, np.exp(-dz / decay_length), 1.0) # fraction passed on by each node
-    else:
-        transmission = np.where(dense, 0.0, 1.0)
 
     released = np.nonzero(LWCblocked > 0)[0]
     if len(released) == 0:
@@ -461,6 +503,8 @@ def bucket(self, iii):
     # read with defaults (outside the try above) so configs without these keys are unaffected
     LeakyLenses     = self.c.get('LeakyLenses', False) and not DownToIce  # ice lenses partially permeable: each node with rho>=RhoImp passes exp(-dz/LensDecayLength) of the water reaching it [True/False]
     LensDecayLength = self.c.get('LensDecayLength', 0.1)                   # (used only if LeakyLenses==True and DownToIce==False) e-folding ice thickness of lens transmission [m]
+    LensPassFraction = self.c.get('LensPassFraction', None)                # (used only if LeakyLenses==True and DownToIce==False) if set (0 to 1), each lens passes this share of the water, whatever its thickness; replaces the LensDecayLength rule [-]
+    LensPassMode    = self.c.get('LensPassMode', 'first')                  # (used only if LensPassFraction is set) 'first': aligned holes, a share f passes all lenses; 'every': independent holes, each run of dense nodes passes a share f
     if LeakyLenses:
         ThickImp    = 0.  # every dense node is a barrier here; leaky_lens_routing passes part of the blocked water through
 
@@ -733,7 +777,8 @@ def bucket(self, iii):
     ### Partially permeable ice lenses: pass part of the blocked LWC through the lenses ###
     if LeakyLenses and np.any(LWCblocked > 0):
         storage_leaky, LWCblocked = leaky_lens_routing(LWCblocked, stcap_remaining - storage_excess,
-                                                       self.rho >= RhoImp, self.dz, LensDecayLength)
+                                                       self.rho >= RhoImp, self.dz, LensDecayLength,
+                                                       LensPassFraction, LensPassMode)
         storagetot = storagetot + storage_leaky
     LWC_redist = LWC_redist + storagetot
 

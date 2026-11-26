@@ -169,7 +169,7 @@ KNOWN_KEYS = {
     'manual_iceout', 'iceout', 'QMorris', 'THist',
     # melt / liquid water
     'liquid', 'merging', 'merge_min', 'LWCcorrect', 'ColeouLesaffre',
-    'IrrVal', 'RhoImp', 'ThickImp', 'LeakyLenses', 'LensDecayLength', 'DownToIce', 'Ponding', 'DirectRunoff',
+    'IrrVal', 'RhoImp', 'ThickImp', 'LeakyLenses', 'LensDecayLength', 'LensPassFraction', 'LensPassMode', 'DownToIce', 'Ponding', 'DirectRunoff',
     'RunoffZuoOerlemans', 'Slope', 'melt_strict', 'keep_firnthickness', 'meltwater_solver', 'meltwater_solver_options',
     'bucket_until_year', 'step_timing',
     'debug_bucket', 'IceMeltFactor', 'IceMeltRho',
@@ -299,6 +299,14 @@ def validate_config(c, config_path=None):
         if key in c and not isinstance(c[key], bool):
             errors.append("key '{}' should be true or false; got {!r}".format(key, c[key]))
 
+    # 3b2. Fixed pass fraction of the leaky lenses (bucket scheme).
+    if 'LensPassFraction' in c:
+        frac = c['LensPassFraction']
+        if isinstance(frac, bool) or not isinstance(frac, (int, float)) or not 0 <= frac <= 1:
+            errors.append("key 'LensPassFraction' should be a number from 0 to 1; got {!r}".format(frac))
+    if 'LensPassMode' in c and c['LensPassMode'] not in ('first', 'every'):
+        errors.append("invalid value {!r} for 'LensPassMode'; allowed values are: 'first', 'every'".format(c['LensPassMode']))
+
     # 3c. Options of the melt split of the darcy scheme.
     # The burst needs the implicit flow step. The check applies only when the darcy scheme runs.
     if (c.get('MELT') and c.get('liquid') == 'darcy' and c.get('melt_split_darcy') == 'burst'
@@ -376,6 +384,11 @@ def validate_config(c, config_path=None):
         elif c.get('DownToIce', False):
             warnings.append(
                 "'LeakyLenses' is ignored when 'DownToIce' is true")
+
+    if ('LensPassFraction' in c or 'LensPassMode' in c) and not c.get('LeakyLenses', False):
+        warnings.append("'LensPassFraction' and 'LensPassMode' have no effect when 'LeakyLenses' is false")
+    elif 'LensPassMode' in c and 'LensPassFraction' not in c:
+        warnings.append("'LensPassMode' has no effect without 'LensPassFraction'")
 
     if c.get('IceMeltFactor', 1.0) != 1.0:
         if not c.get('MELT', False):
