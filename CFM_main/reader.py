@@ -78,6 +78,34 @@ def read_init(folder, resultsFileName, varname, udate = None):
 
 
 
+def read_restart_value(folder, resultsFileName, varname, udate):
+    '''
+    Read a restart quantity from the snapshot of the spin file that was saved at the restart time.
+
+    The datasets massSpin, dzSpin and iceoutSpin only have the snapshots that SpinUpdate_res
+    saved (the spin-up column has none), so their columns do not line up with depthSpin. The value
+    is returned only if the dataset exists and the time in row 0 of the nearest column is equal to udate.
+
+    :param folder: the folder containing the spin file
+    :param resultsFileName: the name of the spin file
+    :param varname: the name of the dataset
+    :param udate: the restart time (updatedStartDate)
+    :return: the column, with the time in element 0, or None if there is no matching snapshot
+    '''
+    if udate is None:
+        return None
+    with h5py.File(os.path.join(folder, resultsFileName),'r') as f5:
+        if varname not in f5.keys():
+            return None
+        values_full = f5[varname][:]
+    if values_full.ndim != 2:
+        return None
+    res_index = (np.abs(values_full[0,:]-udate)).argmin()
+    if values_full[0,res_index] != udate:
+        return None
+    return values_full[:,res_index]
+
+
 ### Forcing file (CFMforcing.hdf5) ###
 ######################################
 

@@ -149,3 +149,6 @@ These two years have little water. Neither case has runoff, and the `darcy` case
 From 1995, the DYE-2 cases have runoff and liquid water at the write times. Use `--start-year 1995` for a change that affects these results. A later year takes longer, because at the default `bucket_until_year`, `darcy` runs for each model year from 1980, and the spin-up repeats the window back in time.
 
 No CI job runs this script, because a change that alters the results on purpose would fail it.
+## Restart test
+
+`test_restart.py` runs a model for 12 years and saves a snapshot in the spin file (`spinUpdate`). It restarts from a copy of the spin file. It compares every output dataset after the snapshot, and the state at the end of the run, with no tolerance (bit for bit). One `bucket` case restarts with 3.5 years of forcing left, less than the 10-year window of the rolling means of the surface temperature and the accumulation rate. Dataset `DIP` is compared without its cumulative columns (they restart at zero) and without the dH values of its first row (the model writes zero there). A second test removes the restart datasets from the spin file and checks that the restart still runs and uses the mean steps per year of its own part of the record. A third test checks that `read_restart_value` returns nothing for a time that is not the snapshot time.
