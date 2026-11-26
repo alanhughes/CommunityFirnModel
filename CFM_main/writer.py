@@ -196,7 +196,11 @@ def SpinUpdate_res(self,mtime):
     Parameters
     ----------
     mtime: float
-        Time (model time) at which the 
+        Time (model time) at which the snapshot is taken.
+
+    Besides the profiles, each snapshot holds massSpin, dzSpin (the layer mass and
+    thickness of the run) and iceoutSpin (row 0 time, row 1 iceout). A restart reads
+    them back, so that it continues the run bit for bit. The spin-up column has none of them.
     '''
 
     spin_results = h5py.File(os.path.join(self.c['resultsFolder'], self.c['spinFileName']),'a')
@@ -220,6 +224,24 @@ def SpinUpdate_res(self,mtime):
     else:
         spin_results['bdot_meanSpin'].resize((vec_len,res_dim+1))
         spin_results['bdot_meanSpin'][:,-1] = np.append(mtime,self.bdot_mean)
+
+    # mass and dz are stored so that a restart does not rebuild them from z and rho (roundoff);
+    # iceout is stored because the restart run cannot recompute it from the full forcing record.
+    # The spin-up column (write_spin_hdf5) has none of these three datasets.
+    for name, values in (('massSpin', self.mass), ('dzSpin', self.dz)):
+        if name not in spin_results.keys():
+            first_snapshot = np.append(mtime,values)
+            spin_results.create_dataset(name, data = first_snapshot[...,None], maxshape=(vec_len,None,))
+        else:
+            spin_results[name].resize((vec_len,spin_results[name].shape[1]+1))
+            spin_results[name][:,-1] = np.append(mtime,values)
+
+    if 'iceoutSpin' not in spin_results.keys():
+        first_iceout = np.array([mtime,self.iceout])
+        spin_results.create_dataset('iceoutSpin', data = first_iceout[...,None], maxshape=(2,None,))
+    else:
+        spin_results['iceoutSpin'].resize((2,spin_results['iceoutSpin'].shape[1]+1))
+        spin_results['iceoutSpin'][:,-1] = np.array([mtime,self.iceout])
 
     if self.c['MELT']:
         # try:

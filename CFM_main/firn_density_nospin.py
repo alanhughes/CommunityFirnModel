@@ -14,6 +14,7 @@ import solver
 from config_loader import load_config, get_rng
 from reader import read_input
 from reader import read_init
+from reader import read_restart_value
 from writer import write_spin_hdf5
 from writer import write_nospin_hdf5
 from writer import SpinUpdate, SpinUpdate_res 
@@ -232,6 +233,12 @@ class FirnDensityNoSpin:
             restart_offset = False
         
         self.updatedStartDate = updatedStartDate
+
+        ### A restart from a saved snapshot uses the layer thickness of the run, not the one rebuilt from z.
+        ### The mass and iceout of the snapshot are read further down.
+        restart_dz = read_restart_value(self.c['resultsFolder'], self.c['spinFileName'], 'dzSpin', updatedStartDate)
+        if restart_dz is not None:
+            self.dz = restart_dz[1:]
 
         ### get temperature and accumulation rate from input csv file
         self.forcing_dict = {} # This dictionary holds all forcing data and will be saved
@@ -542,6 +549,18 @@ class FirnDensityNoSpin:
             # self.modeltime  = np.linspace(yr_start, yr_end, self.stp)
             # self.t          = 1.0 / self.c['stpsPerYear']                   # years per time step
         #####################
+        ### Mean number of steps per year of the run, for the mean accumulation rate of a parcel (bdot_mean) and for
+        ### the instantaneous accumulation rate (steps). The mean is over the whole forcing record, not over the part that a
+        ### restart runs: with a variable time step, the mean of a restart would differ from that of the run that made the snapshot.
+        if restart_offset and self.c['timesetup']=='exact':
+            dt_record = np.diff(input_year_temp_full)*S_PER_YEAR
+            dt_record = np.append(np.mean(dt_record),dt_record)
+            t_record = dt_record/S_PER_YEAR
+        else:
+            dt_record = self.dt
+            t_record = self.t
+        self.steps_per_year_mean = np.mean(S_PER_YEAR/dt_record)
+        self.steps_per_year_record = 1 / np.mean(t_record)
         if self.forcing_data_start is None:
             self.forcing_data_start = self.modeltime[0]
       
@@ -707,6 +726,9 @@ class FirnDensityNoSpin:
         if manual_iceout:
             self.iceout = self.c['iceout']
             print('Ensure that your iceout value has units m ice eq. per year!')
+        elif read_restart_value(self.c['resultsFolder'], self.c['spinFileName'], 'iceoutSpin', updatedStartDate) is not None:
+            self.iceout = read_restart_value(self.c['resultsFolder'], self.c['spinFileName'], 'iceoutSpin', updatedStartDate)[1]
+            print(f'iceout = {self.iceout:.4f} m ice eq./yr (from the spin file snapshot)')
         else:
             flux_in = self.bdot.copy()
             if self.c['SUBLIM']:
@@ -808,6 +830,9 @@ class FirnDensityNoSpin:
 
         ### set up initial mass, stress, and mean accumulation rate
         self.mass           = self.rho * self.dz
+        restart_mass        = read_restart_value(self.c['resultsFolder'], self.c['spinFileName'], 'massSpin', updatedStartDate)
+        if restart_mass is not None:
+            self.mass       = restart_mass[1:]
         self.sigma          = (self.mass + (self.LWC * RHO_W_KGM)) * self.dx * GRAVITY
         self.sigma          = self.sigma.cumsum(axis = 0)
         self.mass_sum       = self.mass.cumsum(axis = 0)
@@ -1162,7 +1187,7 @@ class FirnDensityNoSpin:
         based on the user specified number of timesteps in the model run. Updates the firn density using a user specified 
         
         '''
-        self.steps = 1 / np.mean(self.t) # steps per year
+        self.steps = self.steps_per_year_record # steps per year
         start_time=time.time() # this is a timer to keep track of how long the model run takes.
 
         solver._diag_reset()
@@ -1682,7 +1707,7 @@ class FirnDensityNoSpin:
             self.sigma      = self.sigma.cumsum(axis = 0)
             self.mass_sum   = self.mass.cumsum(axis = 0)
             
-            self.bdot_mean  = (np.concatenate(( [self.mass_sum[0] / (RHO_I * S_PER_YEAR)], self.mass_sum[1:] * self.t[iii] / (self.age[1:] * RHO_I) ))) * np.mean(S_PER_YEAR/self.dt) * S_PER_YEAR
+            self.bdot_mean  = (np.concatenate(( [self.mass_sum[0] / (RHO_I * S_PER_YEAR)], self.mass_sum[1:] * self.t[iii] / (self.age[1:] * RHO_I) ))) * self.steps_per_year_mean * S_PER_YEAR
 
             ### NOTE: sigma = bdot_mean*GRAVITY*age/S_PER_YEAR*917.0) (or, sigma = bdot*g*tau, steady state conversion.)
 
