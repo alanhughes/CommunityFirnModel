@@ -1,8 +1,8 @@
 '''
 A restart from a spin file snapshot (spinUpdate) continues the run bit for bit.
 
-A full run saves a snapshot in the middle of the second year. A second run restarts from a copy of
-that spin file. For every output dataset, the rows after the snapshot have to be identical in the two
+A full run saves a snapshot, in the first year or late in the record. A second run restarts from a
+copy of that spin file. For every output dataset, the rows after the snapshot have to be identical in the two
 runs, with no tolerance. A spin file without the datasets massSpin, dzSpin and iceoutSpin (the
 spin-up column, or a file from an earlier version) still restarts.
 '''
@@ -15,12 +15,14 @@ import numpy as np
 import pytest
 
 SNAPSHOT_DATE = 1980.5
+# A snapshot with less than 10 years of forcing left: the rolling means of the surface temperature and of
+# the accumulation (T_mean, bdot_av, window 10 years) have to come from the whole record.
+LATE_SNAPSHOT_DATE = 1988.5
 
-# The restart has to have at least 10 years of forcing left: the rolling mean of the surface temperature
-# and of the accumulation (T_mean, bdot_av) is a flat mean over a shorter forcing, which is another run.
+# The whole record (spin-up and run) has to be longer than 10 years. Else T_mean and bdot_av are flat means
+# over the forcing of each run, and a restart is another run.
 # grid_output_max_depth is set so that both runs write the gridded outputs to the same depth.
-RUN_SETTINGS = dict(years=12, start_year=1980, num_reps=1, spinUpdate=True, spinUpdateDate=SNAPSHOT_DATE,
-                    grid_output_max_depth=20.0)
+RUN_SETTINGS = dict(years=12, start_year=1980, num_reps=1, spinUpdate=True, grid_output_max_depth=20.0)
 
 # State arrays that are compared at the end of the run (double precision).
 FINAL_STATE = ('rho', 'Tz', 'age', 'z', 'dz', 'mass', 'LWC', 'bdot_mean', 'sigma')
@@ -55,24 +57,26 @@ def _restart(full_run, folder, remove_datasets=()):
     return folder / full_run.config['resultsFileName'], model
 
 
-def _snapshot_time(spin_path):
+def _snapshot_time(spin_path, snapshot_date=SNAPSHOT_DATE):
     with h5py.File(spin_path, 'r') as f:
         times = f['densitySpin'][0, :]
-    return times[np.abs(times - SNAPSHOT_DATE).argmin()]
+    return times[np.abs(times - snapshot_date).argmin()]
 
 
 CASES = [
-    pytest.param(dict(liquid='bucket', DFfile='CFM_example_66.5_-46.25.pkl'), id='bucket_dye2'),
-    pytest.param(dict(MELT=False), id='dry_summit'),
+    pytest.param(dict(liquid='bucket', DFfile='CFM_example_66.5_-46.25.pkl'), SNAPSHOT_DATE, id='bucket_dye2'),
+    pytest.param(dict(liquid='bucket', DFfile='CFM_example_66.5_-46.25.pkl'), LATE_SNAPSHOT_DATE,
+                 id='bucket_dye2_late'),
+    pytest.param(dict(MELT=False), SNAPSHOT_DATE, id='dry_summit'),
 ]
 
 
 @pytest.mark.scheme
-@pytest.mark.parametrize('overrides', CASES)
-def test_restart_is_bit_exact(short_config, tmp_path, overrides):
-    full_run = short_config(**RUN_SETTINGS, **overrides)
+@pytest.mark.parametrize('overrides, snapshot_date', CASES)
+def test_restart_is_bit_exact(short_config, tmp_path, overrides, snapshot_date):
+    full_run = short_config(**RUN_SETTINGS, spinUpdateDate=snapshot_date, **overrides)
     full_model = full_run.run()
-    snapshot_time = _snapshot_time(full_run.folder / full_run.config['spinFileName'])
+    snapshot_time = _snapshot_time(full_run.folder / full_run.config['spinFileName'], snapshot_date)
     restart_path, restart_model = _restart(full_run, tmp_path / 'restart')
 
     with h5py.File(full_run.results_path, 'r') as full, h5py.File(restart_path, 'r') as restart:
@@ -98,7 +102,7 @@ def test_restart_is_bit_exact(short_config, tmp_path, overrides):
 
 @pytest.mark.scheme
 def test_restart_from_a_file_without_the_restart_datasets(short_config, tmp_path):
-    full_run = short_config(**RUN_SETTINGS, MELT=False)
+    full_run = short_config(**RUN_SETTINGS, spinUpdateDate=SNAPSHOT_DATE, MELT=False)
     full_run.run()
     spin_path = full_run.folder / full_run.config['spinFileName']
     with h5py.File(spin_path, 'r') as f:
@@ -111,7 +115,7 @@ def test_restart_from_a_file_without_the_restart_datasets(short_config, tmp_path
 def test_snapshot_of_another_time_is_not_used(short_config):
     '''read_restart_value returns a value only for the snapshot at the restart time.'''
     from reader import read_restart_value
-    full_run = short_config(**RUN_SETTINGS, MELT=False)
+    full_run = short_config(**RUN_SETTINGS, spinUpdateDate=SNAPSHOT_DATE, MELT=False)
     full_run.run()
     folder, name = str(full_run.folder), full_run.config['spinFileName']
     time = _snapshot_time(full_run.folder / name)
