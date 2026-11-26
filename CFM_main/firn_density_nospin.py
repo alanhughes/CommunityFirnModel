@@ -237,7 +237,8 @@ class FirnDensityNoSpin:
         ### A restart from a saved snapshot uses the layer thickness of the run, not the one rebuilt from z.
         ### The mass and iceout of the snapshot are read further down.
         restart_dz = read_restart_value(self.c['resultsFolder'], self.c['spinFileName'], 'dzSpin', updatedStartDate)
-        if restart_dz is not None:
+        restart_from_snapshot = restart_dz is not None # the snapshot was saved by a run (not the spin-up column, not an older file)
+        if restart_from_snapshot:
             self.dz = restart_dz[1:]
 
         ### get temperature and accumulation rate from input csv file
@@ -552,7 +553,8 @@ class FirnDensityNoSpin:
         ### Mean number of steps per year of the run, for the mean accumulation rate of a parcel (bdot_mean) and for
         ### the instantaneous accumulation rate (steps). The mean is over the whole forcing record, not over the part that a
         ### restart runs: with a variable time step, the mean of a restart would differ from that of the run that made the snapshot.
-        if restart_offset and self.c['timesetup']=='exact':
+        ### (SeasonalTcycle uses the interp time steps, also when timesetup is exact.)
+        if restart_from_snapshot and self.c['timesetup']=='exact' and not self.c.get('SeasonalTcycle', False):
             dt_record = np.diff(input_year_temp_full)*S_PER_YEAR
             dt_record = np.append(np.mean(dt_record),dt_record)
             t_record = dt_record/S_PER_YEAR
@@ -641,7 +643,7 @@ class FirnDensityNoSpin:
             self.sublim       = -9999 * np.ones_like(self.bdot)
         self.bdotSec    = self.bdot / S_PER_YEAR / (S_PER_YEAR/self.dt) # accumulation at each time step (meters i.e. per second). gets multiplied by S_PER_YEAR later. (sort of hacky, I know)
 
-        ### In a restart the rolling means are taken over the whole forcing record and the restart takes its part at
+        ### In a restart from a snapshot the rolling means are taken over the whole forcing record and the restart takes its part at
         ### the end, so they are the same as in the run that made the snapshot, also when less than Nyears of forcing
         ### are left after the snapshot.
         try: # Rolling mean average surface temperature (long-term climate)
@@ -650,7 +652,7 @@ class FirnDensityNoSpin:
 
             T_mean_short = pd.Series(self.Ts).rolling(window=NN+1,win_type='hamming').mean().values
             self.T_mean = pd.Series(Ts_full).rolling(window=NN+1,win_type='hamming').mean().values.copy()
-            if restart_offset: # fill the gap at the start of the whole record, then take the part of the restart
+            if restart_from_snapshot: # fill the gap at the start of the whole record, then take the part of the restart
                 self.T_mean[np.isnan(self.T_mean)] = self.T_mean[NN]
                 self.T_mean = self.T_mean[-len(T_mean_short):]
             else:
@@ -671,7 +673,7 @@ class FirnDensityNoSpin:
 
             bdot_av_short = pd.Series(self.bdot).rolling(window=NN+1,win_type='hamming').mean().values
             self.bdot_av = pd.Series(bdot_full).rolling(window=NN+1,win_type='hamming').mean().values.copy()
-            if restart_offset: # fill the gap at the start of the whole record, then take the part of the restart
+            if restart_from_snapshot: # fill the gap at the start of the whole record, then take the part of the restart
                 self.bdot_av[np.isnan(self.bdot_av)] = self.bdot_av[NN]
                 self.bdot_av = self.bdot_av[-len(bdot_av_short):]
             else:
@@ -734,11 +736,12 @@ class FirnDensityNoSpin:
         except KeyError:
             manual_iceout = False
 
+        restart_iceout = read_restart_value(self.c['resultsFolder'], self.c['spinFileName'], 'iceoutSpin', updatedStartDate)
         if manual_iceout:
             self.iceout = self.c['iceout']
             print('Ensure that your iceout value has units m ice eq. per year!')
-        elif read_restart_value(self.c['resultsFolder'], self.c['spinFileName'], 'iceoutSpin', updatedStartDate) is not None:
-            self.iceout = read_restart_value(self.c['resultsFolder'], self.c['spinFileName'], 'iceoutSpin', updatedStartDate)[1]
+        elif restart_iceout is not None:
+            self.iceout = restart_iceout[1]
             print(f'iceout = {self.iceout:.4f} m ice eq./yr (from the spin file snapshot)')
         else:
             flux_in = self.bdot.copy()

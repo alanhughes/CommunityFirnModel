@@ -14,6 +14,8 @@ import h5py
 import numpy as np
 import pytest
 
+from constants import S_PER_YEAR
+
 SNAPSHOT_DATE = 1980.5
 # A snapshot with less than 10 years of forcing left: the rolling means of the surface temperature and of
 # the accumulation (T_mean, bdot_av, window 10 years) have to come from the whole record.
@@ -107,8 +109,12 @@ def test_restart_from_a_file_without_the_restart_datasets(short_config, tmp_path
     spin_path = full_run.folder / full_run.config['spinFileName']
     with h5py.File(spin_path, 'r') as f:
         assert {'massSpin', 'dzSpin', 'iceoutSpin'} <= set(f.keys())
-    restart_path, _ = _restart(full_run, tmp_path / 'restart', remove_datasets=('massSpin', 'dzSpin', 'iceoutSpin'))
+    restart_path, model = _restart(full_run, tmp_path / 'restart', remove_datasets=('massSpin', 'dzSpin', 'iceoutSpin'))
     assert restart_path.exists()
+    # Without a snapshot of the run, the restart uses the steps of its own part of the record, as a run that is
+    # not restarted from a snapshot does (the whole-record means are only for a restart from a snapshot).
+    assert model.steps_per_year_mean == np.mean(S_PER_YEAR / model.dt)
+    assert model.steps_per_year_record == 1 / np.mean(model.t)
 
 
 @pytest.mark.scheme
