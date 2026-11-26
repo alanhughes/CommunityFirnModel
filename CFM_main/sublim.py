@@ -48,7 +48,7 @@ def sublim(self,iii):
     ## Beware of this if you are not modeling to firn-ice transition depth.
     divider         = num_boxes_sublim #VV nb of sublimated boxes, including the partially sublimated
     self.rho        = np.concatenate((self.rho[ind1:-1] , self.rho[-1]*np.ones(num_boxes_sublim))) #VV add at bottom of column as many layers as were sublimated away
-    self.LWC        = np.concatenate((self.LWC[ind1:-1] , np.zeros(num_boxes_sublim))) # This is better but should be equivalent as last layer should be an ice layer -> with 0 LWC
+    self.LWC        = np.concatenate((self.LWC[ind1:-1] , [self.LWC[-1]] , np.zeros(num_boxes_sublim-1))) # the first node added at the bottom is the old bottom node and keeps its water; the other new nodes are dry
     self.LWC[0]     = ps_lwc #VV LWC calculated for the partially sublimated layer
     
     self.PLWC_mem   = np.concatenate((self.PLWC_mem[ind1:-1] , np.zeros(num_boxes_sublim)))

@@ -84,7 +84,7 @@ In ``test_hl_analytic.py``, ``test_liquid_water.py`` and ``test_densification.py
 Scheme tests (``scheme``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A scheme test calls one meltwater scheme once, on a synthetic column (see `Fixtures for new tests`_). It does not run the model.
+A scheme test calls one meltwater scheme, or the sublimation step, once, on a synthetic column (see `Fixtures for new tests`_). It does not run the model.
 
 .. list-table::
    :header-rows: 1
@@ -104,6 +104,8 @@ A scheme test calls one meltwater scheme once, on a synthetic column (see `Fixtu
      - ``darcyscheme`` against the wetting front oracle, with the same flux law, for rain on dry firn at the melting temperature. The water content behind the front and the front speed agree within 4 %, and within 0.5 % for the water content with a short fixed sub-step. The water stays in the column, and the input enters at the top node. At thin nodes the sub-step stops at **dtmin_darcy** and the limiter sets the flux, so these cases are expected failures. The file shows that the limiter gives the water content there, that a shorter **dtmin_darcy** removes the error on uniform nodes, and that 10 times the permeability follows the law at resolved nodes and has no effect at thin nodes.
    * - ``test_melt_removal.py``
      - ``bucket`` and ``darcyscheme`` shift ``bdot_mean`` and ``Dcon`` when melt removes nodes. The file also has ``unit`` tests of the warning for the schemes that ignore **keep_firnthickness** in their melt removal.
+   * - ``test_sublim_scheme.py``
+     - ``sublim``: the liquid water of the bottom node stays in that node, the nodes added at the bottom hold no liquid water, and the sublimated water is the water of the sublimated nodes.
 
 Conservation tests (``conservation``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
